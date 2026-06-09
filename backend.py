@@ -5,6 +5,7 @@ from  agent import workflow
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional,Literal
 from dotenv import load_dotenv
+import traceback
 load_dotenv()
 
 app=FastAPI()
@@ -41,4 +42,5 @@ async def agent_call(request:initial):
             "data": sections
         }
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500,detail=str(e))
