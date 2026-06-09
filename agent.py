@@ -18,10 +18,6 @@ from pydantic import BaseModel,Field
 from huggingface_hub import AsyncInferenceClient
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-model_id = "black-forest-labs/FLUX.2-dev"
-hf_token = os.getenv("HF_TOKEN")
-client = AsyncInferenceClient(token=hf_token)
-
 llm=ChatGroq(model="llama-3.3-70b-versatile", temperature=0,api_key=os.getenv("GROQ_API_KEY"))
 vision_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash",temperature=0,api_key=os.getenv("GOOGLE_API_KEY"))
 
@@ -372,13 +368,13 @@ async def final_checking(state:BaseState):
                 "type": "image_url", 
                 "image_url": {"url": sec["image_url"]}
             })
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", message_content)
-    ])
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=message_content)
+    ]
     grader_llm = vision_llm.with_structured_output(FinalPublicationGrade)
-    flow = prompt | grader_llm
-    result = await flow.ainvoke(prompt)
+    flow = messages| grader_llm
+    result = await flow.ainvoke(messages)
     
     return {
         "Text_Grading": result.text_approved,
