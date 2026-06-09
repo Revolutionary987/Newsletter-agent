@@ -43,6 +43,7 @@ langgraph-checkpoint==4.1.1
 langgraph-prebuilt==1.1.0
 langgraph-sdk==0.4.2
 langsmith==0.8.9
+langchain-openai=1.2.2
 lxml==6.1.1
 markdown-it-py==4.2.0
 mdurl==0.1.2
