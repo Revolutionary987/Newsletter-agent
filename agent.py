@@ -21,7 +21,7 @@ from pydantic import BaseModel,Field
 from huggingface_hub import AsyncInferenceClient
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-
+from langchain_openai import ChatOpenAI
 # Connect to the free serverless API
 hf_endpoint = HuggingFaceEndpoint(
     repo_id="google/gemma-4-26B-A4B-it",
@@ -29,7 +29,8 @@ hf_endpoint = HuggingFaceEndpoint(
     huggingfacehub_api_token=os.getenv("HF_TOKEN")
 )
 vision_llm = ChatHuggingFace(llm=hf_endpoint)
-llm=ChatGroq(model="llama-3.3-70b-versatile", temperature=0,api_key=os.getenv("GROQ_API_KEY"))
+# llm=ChatGroq(model="llama-3.3-70b-versatile", temperature=0,api_key=os.getenv("GROQ_API_KEY"))
+llm = ChatOpenAI(base_url="https://openrouter.ai/api/v1",api_key=os.getenv("OPENROUTER_API_KEY"),model="nvidia/nemotron-3-ultra-550b-a55b:free",temperature=0.3, max_retries=5)
 # vision_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash",temperature=0,api_key=os.getenv("GOOGLE_API_KEY"))
 vision_llm=ChatHuggingFace(llm=hf_endpoint)
 
