@@ -20,7 +20,7 @@ class initial(BaseModel):
     audience: Optional[str] = "General Public"
     tone: Optional[str] = "Professional"
     length:Literal["short", "medium", "long"]
-    key_points=Optional[str]=None
+    key_points:Optional[str]=None
 
 @app.post("/api/v1/generate")
 async def agent_call(request:initial):
