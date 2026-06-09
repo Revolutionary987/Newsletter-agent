@@ -31,6 +31,7 @@ class ArticleSection(TypedDict):
 class BaseState(TypedDict):
     User_query:str
     revised_query:str
+    length:str
     Outline:str
     Grading:bool
     Feedback:str
@@ -100,6 +101,7 @@ async def research(state:BaseState)->str:
     topic=state.get("revised_query")
     target_audience=state.get("audience", "General Public")
     tone=state.get("tone", "Professional")
+    length=state.get("length","medium")
 
     system_prompt="""
     You are the Lead Research Synthesizer for a professional, dynamic newsletter. Your objective is to extract accurate, up-to-date information on any user-provided subject and structure it into a "narrative blueprint" so the Editorial Node can craft an engaging, magazine-style article.
@@ -126,6 +128,7 @@ async def research(state:BaseState)->str:
         - **Target Topic:** {topic}
         - **Target Audience:** {target_audience}
         - **Desired Tone of Final Article:** {tone}
+        - **Desired Length of the content:**{length}
         
         **EXECUTION DIRECTIVE:**
         If you need up-to-date facts and for topics you aren't confident or may require external innformation , use your search tools. If you have enough data, output ONLY the finalized "Narrative Blueprint".
@@ -141,7 +144,8 @@ async def research(state:BaseState)->str:
     messages=prompt.format_messages(
         topic=topic,
         target_audience=target_audience,
-        tone=tone
+        tone=tone,
+        length=length
     )
     llm_with_tools = llm.bind_tools([web_search])
     response=await llm_with_tools.ainvoke(messages)

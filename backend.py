@@ -3,14 +3,14 @@ from fastapi import FastAPI,HTTPException
 from pydantic import BaseModel
 from  agent import workflow
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
+from typing import Optional,Literal
 from dotenv import load_dotenv
 load_dotenv()
 
 app=FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://aegis-ui-l596.onrender.com","http://localhost:3000","http://localhost:5173"], 
+    allow_origins=["https://newsletter-agent-jvvq.onrender.com","http://localhost:3000","http://localhost:5173"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -19,6 +19,7 @@ class initial(BaseModel):
     topic: str
     audience: Optional[str] = "General Public"
     tone: Optional[str] = "Professional"
+    length:Literal["short", "medium", "long"]
 
 @app.post("/api/v1/generate")
 async def agent_call(request:initial):
@@ -26,10 +27,11 @@ async def agent_call(request:initial):
         initial_state={
             "User_query": request.topic,
             "audience": request.audience,
-            "tone": request.tone
+            "tone": request.tone,
+            "length":request.length
         }
         final_state=await workflow.ainvoke(initial_state)
-        sections=final_state.get("article_section",[])
+        sections=final_state.get("article_sections",[])
         if not sections:
             raise HTTPException(status_code=500, detail="Agent failed to generate sections.")
         return {
