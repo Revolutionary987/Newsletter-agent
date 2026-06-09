@@ -1,23 +1,41 @@
-import os 
+import os
+import io
+import base64
+import httpx
 from dotenv import load_dotenv
 from typing import TypedDict,Literal,Annotated
 from langgraph.graph import StateGraph,START,END
 import asyncio
+from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_core.messages import HumanMessage,SystemMessage,ToolMessage
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from duckduckgo_search import DDGS
 from pydantic import BaseModel,Field
+from huggingface_hub import AsyncInferenceClient
+from langchain_google_genai import ChatGoogleGenerativeAI
+
+model_id = "black-forest-labs/FLUX.2-dev"
+hf_token = os.getenv("HF_TOKEN")
+client = AsyncInferenceClient(token=hf_token)
+
 llm=ChatGroq(model="llama-3.3-70b-versatile", temperature=0,api_key=os.getenv("GROQ_API_KEY"))
+vision_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash",temperature=0,api_key=os.getenv("GOOGLE_API_KEY"))
 
 class BaseState(TypedDict):
     User_query:str
+    revised_query:str
     Outline:str
     Draft:str
     Grading:bool
     Feedback:str
-    images:list[str]
+    image_url: str  
+    alt_text: str
+    Text_Grading: bool
+    Text_Feedback: str
+    Image_Grading: bool
+    Image_Feedback: str
 @tool
 def web_search(query:str)->str:
     try:
@@ -31,10 +49,48 @@ def web_search(query:str)->str:
             return "\n".join(formatted_results)
     except Exception as e:
         return f"Search failed due to an error: {str(e)}"
+async def query_rewrite(state:BaseState):
+    user_query=state["User_query"]
+    system_prompt="""
+    You are the Lead Query Architect for a premium tech and business publication. Your objective is to take a user's raw, often brief topic suggestion and expand it into a highly detailed, multi-faceted "Research Directive."
 
-    
+    This directive will be passed to an autonomous Research Agent that relies on web search tools. If your output is too broad, the agent will fail to find specific, compelling facts.
+
+    INSTRUCTIONS:
+    1. Analyze the user's raw input and identify the core subject.
+    2. Break the subject down into 3-4 highly specific sub-topics or "angles" that the Research Agent must investigate (e.g., technological mechanics, market impact, regulatory hurdles, or historical context).
+    3. Identify 2-3 specific keywords or exact phrases the Research Agent should use in its search queries to find the most recent, high-quality data.
+    4. Output your expansion strictly as a cohesive, highly detailed paragraph. Do not use bullet points or conversational filler.
+
+    Your output must act as the ultimate, foolproof set of instructions for the downstream Research Agent.
+    """
+
+    human_prompt="""
+    **QUERY EXPANSION INITIATION**
+    Please process the following raw user input.
+
+    **RAW USER INPUT:**
+    <raw_query>
+    {user_query}
+    </raw_query>
+
+    **EXECUTION DIRECTIVE:**
+    Expand this raw input into the comprehensive Research Directive paragraph as defined in your instructions. Output ONLY the directive paragraph.
+    """
+    prompt=ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", human_prompt)
+    ])
+    flow=prompt|llm
+    response=await flow.ainvoke(
+        {
+          "user_query":user_query
+        }
+    )
+    return {"revised_query":response.content}
+
 async def research(state:BaseState)->str:
-    topic=state.get("User_query")
+    topic=state.get("revised_query")
     target_audience=state.get("audience", "General Public")
     tone=state.get("tone", "Professional")
 
@@ -70,12 +126,10 @@ async def research(state:BaseState)->str:
         Do not output any conversational filler. Output ONLY the finalized "Narrative Blueprint" exactly as defined in your system instructions.
 
 """
-    prompt=ChatPromptTemplate.from_messages(
-        [
+    prompt=ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         ("human", Human_prompt)
-    ]
-    )
+    ])
     # format_messages creates a list by default when called
     messages=prompt.format_messages(
         topic=topic,
@@ -86,28 +140,29 @@ async def research(state:BaseState)->str:
     response=await llm.ainvoke(messages)
     if response.tool_calls:
         messages.append(response)
-    for tool_call in response.tool_calls:
+        for tool_call in response.tool_calls:
             if tool_call["name"] == "web_search":
                 tool_output = web_search.invoke(tool_call["args"]) 
-                
-                # Package the result back to the LLM
+                    
+                    # Package the result back to the LLM
                 tool_message = ToolMessage(
                     content=str(tool_output),
                     tool_call_id=tool_call["id"]
                 )
                 messages.append(tool_message)
-            final_response = await llm_with_tools.ainvoke(messages)
-            return {"Outline": final_response.content}
+        final_response = await llm_with_tools.ainvoke(messages)
+        return {"Outline": final_response.content}
        
     else:
         # If the LLM already knew the answer, just return it
-        return {"Outline": response.content}
+        return {"Outline":response.content}
 
 async def gen_draft(state:BaseState)->str:
 
     outline=state["Outline"]
     target_audience=state.get("audience", "General Public")
     tone=state.get("tone", "Professional")
+    previous_feedback = state.get("Feedback", "")
 
     system_prompt="""
     You are the Senior Editor and Lead Staff Writer for a premium, magazine-style newsletter. Your objective is to take the factual "Narrative Blueprint" provided by the Research team and transform it into a captivating, highly readable article.
@@ -132,7 +187,17 @@ async def gen_draft(state:BaseState)->str:
     Do not output any introductory or concluding conversational text (e.g., "Here is your article:"). Output ONLY the final, polished newsletter text.
 
     """
-
+    revision_directive = ""
+    if previous_feedback and previous_feedback != "Perfect":
+        revision_directive = f"""
+        **CRITICAL REVISION DIRECTIVE:**
+        Your previous draft was REJECTED by the Managing Editor for the following reasons:
+        <feedback>
+        {previous_feedback}
+        </feedback>
+        
+        You MUST completely rewrite the draft, ensuring every single piece of feedback is addressed and fixed.
+        """
     human_prompt="""
     **EDITORIAL TASK INITIATION**
     Please execute your drafting duties for the following assignment. 
@@ -140,7 +205,7 @@ async def gen_draft(state:BaseState)->str:
     **PARAMETER CONSTRAINTS:**
     - Target Audience: {target_audience}
     - Required Tone: {tone}
-
+    {revision_directive}
     **SOURCE MATERIAL (NARRATIVE BLUEPRINT):**
     Below is the raw factual data compiled by the Research Team. You must use this data to write the final article according to your system instructions. Do not add outside facts.
 
@@ -148,13 +213,14 @@ async def gen_draft(state:BaseState)->str:
     {outline}
     </blueprint>
     """
-    prompt=ChatPromptTemplate.from_messages(
-        "system",system_prompt,
-        "human",human_prompt
-)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", human_prompt)
+    ])
+    
     flow=prompt|llm
-    response=await flow.ainvoke(prompt)
-    return {"Draft",response.content}
+    response=await flow.ainvoke({"outline": outline,"target_audience": target_audience,"tone": tone,"revision_directive": revision_directive})
+    return {"Draft":response.content}
 
 class Gradee(BaseModel):
     is_pass: Annotated[bool,Field(description="Set to True if the draft is 100% factual and matches the formatting rules. Set to False if there are hallucinations or poor formatting.")]
@@ -163,7 +229,6 @@ class Gradee(BaseModel):
 async def check_hal(state:BaseState):
     outline=state["Outline"]
     draft=state["Draft"]
-
     system_prompt="""
     You are the Managing Editor and Chief Fact-Checker for a premium newsletter. Your objective is to review the writer's Draft against the original Research Blueprint to ensure strict quality and factual accuracy.
 
@@ -195,35 +260,133 @@ async def check_hal(state:BaseState):
     Compare the <draft> to the <blueprint>. Output your JSON evaluation dictating whether the draft is approved to publish or requires a rewrite.
     """
 
-    prompt=ChatPromptTemplate.from_messages(
-        "system",system_prompt,
-        "human",human_prompt
-    )
-    flow=prompt|llm
-    response=await flow.ainvoke(prompt)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", human_prompt)
+    ])
+    
+    structured_llm=llm.with_structured_output(Gradee)
+    flow=prompt|structured_llm
+    response=await flow.ainvoke({"outline": outline, "draft": draft})
     return {
         "Grading": response.is_pass, 
         "Feedback": response.feedback
         }
 
-async def check_grade(state:BaseState)->Literal["Image_gen","Research"]:
-    if state["Grading"]== False:
-        return "Research"
-    else:
-        return "Image_gen"
+class ImageSearchQuery(BaseModel):
+    search_query: Annotated[str, Field(description="A highly targeted 2-3 word search query to find a real photograph on Pexels. Keep it literal.")]
+    alt_text: Annotated[str, Field(description="A brief 5-word description of the expected image.")]
+
+async def gen_image(state: BaseState):
+    draft = state["Draft"]
+    previous_feedback = state.get("Image_Feedback", "")
+    revision_directive = ""
+    if previous_feedback and previous_feedback != "Perfect":
+        revision_directive = f"""
+        **CRITICAL REVISION DIRECTIVE:**
+        Your previous image search query was REJECTED for the following reason:
+        {previous_feedback}
+        
+        You must generate a COMPLETELY DIFFERENT search query this time to fix the issue.
+        """
     
-async def gen_image(state:BaseState):
+    system_prompt = """You are the Lead Photo Editor for a premium business and tech publication.
+    Your job is to read the finalized article draft and select the perfect hero image to sit at the top of the page.
+    
+    INSTRUCTIONS:
+    1. Read the draft and identify the CORE THEME or main subject.
+    2. Translate that theme into a physical, photographable scene. (e.g., If the article is about "AI disrupting finance," do not search for 'AI finance'. Search for 'stock market screens' or 'modern bank building').
+    3. Generate a concise 2-3 word search query for the Pexels API.
+    {revision_directive}
+    
+    Keep queries simple, literal, and highly relevant to the overall summary of the text.
+    """
+    
+    human_prompt = "**ARTICLE DRAFT TO SUMMARIZE:**\n\n{draft}"
+    
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", human_prompt)
+    ])
+    
+    editor_llm = llm.with_structured_output(ImageSearchQuery)
+    flow = prompt | editor_llm
+    llm_result = await flow.ainvoke({"draft": draft,"revision_directive": revision_directive}) 
+
+    api_key = os.getenv("PEXELS_API_KEY")
+    url = "https://api.pexels.com/v1/search"
+    params = {"query": llm_result.search_query, "per_page": 1, "orientation": "landscape"}
+    headers = {"Authorization": api_key}
+    
+    image_url = ""
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, params=params, headers=headers)
+            response.raise_for_status() 
+            data = response.json()
+            if data.get("photos") and len(data["photos"]) > 0:
+                image_url = data["photos"][0]["src"]["landscape"]
+        except Exception as e:
+            print(f"Pexels Error: {e}")
+    return {
+        "image_url": image_url,
+        "alt_text": llm_result.alt_text
+    }
+   
+async def check_grade(state:BaseState)->Literal["Image_gen","Creating_draft"]:
+    if state["Grading"]==True:
+        return "Image_gen"
+    else:
+        return "Creating_draft"
+class FinalPublicationGrade(BaseModel):
+    text_approved: bool = Field(description="True if text is factual and formatted correctly.")
+    text_feedback: str = Field(description="Feedback for the writer. Write 'Perfect' if approved.")
+    image_approved: bool = Field(description="True if the image matches the text perfectly.")
+    image_feedback: str = Field(description="Feedback for the photo editor. Write 'Perfect' if approved.")
+
+async def final_checking(state:BaseState):
+    draft=state["Draft"]
+    image_url=state.get("image_url","")
+    system_prompt = "You are the Editor-in-Chief. Evaluate the final text for factual accuracy and ensure the image is a highly professional, relevant match."
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", [
+            {"type": "text", "text": "Evaluate this final text:\n\n{draft}"},
+            {"type": "text", "text": "Now, evaluate this attached image:"},
+            {"type": "image_url", "image_url": {"url": "{image_url}"}}
+        ])
+    ])
+    grader_llm = vision_llm.with_structured_output(FinalPublicationGrade)
+    flow = prompt | grader_llm
+    result = await flow.ainvoke({"draft": draft,"image_url": image_url})
+    
+    return {
+        "Text_Grading": result.text_approved,
+        "Text_Feedback": result.text_feedback,
+        "Image_Grading": result.image_approved,
+        "Image_Feedback": result.image_feedback
+    }
+
+async def check(state:BaseState)->Literal["Creating_draft","Image_gen"]:
+    if state["Text_Grading"]==False:
+        return "Creating_draft"
+    elif state["Image_Grading"]==False:
+        return "Image_gen"
+    else:
+        return END
     
 graph=StateGraph(BaseState)
 graph.add_node("Research",research)
-# graph.add_node("Generate_outline",outline)
+graph.add_node("Rewrite_query",query_rewrite)
 graph.add_node("Creating_draft",gen_draft)
 graph.add_node("Hallucination_check",check_hal)
-# graph.add_node("Generate_score",grade)
 graph.add_node("Image_gen",gen_image)
+graph.add_node("Final_check",final_checking)
 
-graph.add_edge(START,"Research")
-graph.add_edge("Research","Generate_outline")
-graph.add_edge("Generate_outline","Creating_draft")
-graph.add_conditional_edges("Creating_draft",check_grade)
-graph.add_edge("Image_gen",END)
+graph.add_edge(START,"Rewrite_query")
+graph.add_edge("Rewrite_query","Research")
+graph.add_edge("Research","Creating_draft")
+graph.add_edge("Creating_draft","Hallucination_check")
+graph.add_conditional_edges("Hallucination_check",check_grade)
+graph.add_edge("Image_gen","Final_check")
+graph.add_conditional_edges("Final_check",check)
