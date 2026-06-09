@@ -4,7 +4,7 @@ import base64
 import httpx
 from dotenv import load_dotenv
 load_dotenv()
-
+from langchain_core.output_parsers import PydanticOutputParser
 from typing import Literal,Annotated,Optional,List
 from typing_extensions import TypedDict
 from langgraph.graph import StateGraph,START,END
@@ -380,6 +380,7 @@ class FinalPublicationGrade(BaseModel):
 
 async def final_checking(state:BaseState):
     sections = state["article_sections"]
+    parser = PydanticOutputParser(pydantic_object=FinalPublicationGrade)
     system_prompt = "You are the Editor-in-Chief. Evaluate the final text for factual accuracy and ensure the image is a highly professional, relevant match."
     message_content = [{"type": "text", "text": "Evaluate this entire newsletter and its images:"}]
     for sec in sections:
@@ -396,15 +397,21 @@ async def final_checking(state:BaseState):
         SystemMessage(content=system_prompt),
         HumanMessage(content=message_content)
     ]
-    grader_llm = vision_llm.with_structured_output(FinalPublicationGrade)
-    result = await grader_llm.ainvoke(messages)
-    
-    return {
-        "Text_Grading": result.text_approved,
-        "Text_Feedback": result.text_feedback,
-        "Image_Grading": result.image_approved,
-        "Image_Feedback": result.image_feedback
-    }
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            raw_response = await vision_llm.ainvoke(messages)
+            result = parser.invoke(raw_response)
+            return {
+                "Text_Grading": result.text_approved,
+                "Text_Feedback": result.text_feedback,
+                "Image_Grading": result.image_approved,
+                "Image_Feedback": result.image_feedback
+            }
+        except Exception as e:
+            print(f"JSON Parsing failed on attempt {attempt + 1}: {e}")
+            if attempt == max_retries - 1:
+                raise ValueError("The Editor Agent failed to format its grading response. Aborting publication for safety.")
 
 async def check(state:BaseState)->Literal["Creating_draft","Image_gen","__end__"]:
     if state["Text_Grading"]==False:
