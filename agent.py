@@ -4,6 +4,8 @@ import base64
 import httpx
 from dotenv import load_dotenv
 load_dotenv()
+import json
+import re
 from langchain_core.output_parsers import PydanticOutputParser
 from typing import Literal,Annotated,Optional,List
 from typing_extensions import TypedDict
@@ -401,13 +403,25 @@ async def final_checking(state:BaseState):
     for attempt in range(max_retries):
         try:
             raw_response = await vision_llm.ainvoke(messages)
-            result = parser.invoke(raw_response)
-            return {
-                "Text_Grading": result.text_approved,
-                "Text_Feedback": result.text_feedback,
-                "Image_Grading": result.image_approved,
-                "Image_Feedback": result.image_feedback
-            }
+            content = raw_response.content if hasattr(raw_response, 'content') else str(raw_response)
+            json_match = re.search(r'\{.*\}', content, re.DOTALL)
+            if json_match:
+                clean_json_str = json_match.group(0)
+                data = json.loads(clean_json_str)
+                return {
+                    "Text_Grading": data.get("text_approved", data.get("Text_Grading", False)),
+                    "Text_Feedback": data.get("text_feedback", data.get("Text_Feedback", "No text feedback provided")),
+                    "Image_Grading": data.get("image_approved", data.get("Image_Grading", False)),
+                    "Image_Feedback": data.get("image_feedback", data.get("Image_Feedback", "No image feedback provided"))
+                }
+            else:
+                result = parser.parse(content)
+                return {
+                    "Text_Grading": result.text_approved,
+                    "Text_Feedback": result.text_feedback,
+                    "Image_Grading": result.image_approved,
+                    "Image_Feedback": result.image_feedback
+                }
         except Exception as e:
             print(f"JSON Parsing failed on attempt {attempt + 1}: {e}")
             if attempt == max_retries - 1:
