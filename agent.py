@@ -241,7 +241,7 @@ async def gen_draft(state:BaseState)->str:
     ])
     structured_llm=llm.with_structured_output(DraftOutput)
     flow=prompt|structured_llm
-    response=await flow.ainvoke({"outline": outline,"target_audience": target_audience,"tone": tone,"revision_directive": revision_directive})
+    response=await flow.ainvoke({"outline": outline,"target_audience": target_audience,"tone": tone,"revision_directive": revision_directive,"key_points": key_points})
     return {"article_sections":response.sections}
 
 class Gradee(BaseModel):
