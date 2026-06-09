@@ -3,6 +3,8 @@ import io
 import base64
 import httpx
 from dotenv import load_dotenv
+load_dotenv()
+
 from typing import TypedDict,Literal,Annotated,Optional,List
 from langgraph.graph import StateGraph,START,END
 import asyncio
@@ -408,3 +410,5 @@ graph.add_edge("Creating_draft","Hallucination_check")
 graph.add_conditional_edges("Hallucination_check",check_grade)
 graph.add_edge("Image_gen","Final_check")
 graph.add_conditional_edges("Final_check",check)
+
+workflow=graph.compile()
