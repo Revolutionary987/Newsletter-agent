@@ -3,7 +3,7 @@ import io
 import base64
 import httpx
 from dotenv import load_dotenv
-from typing import TypedDict,Literal,Annotated
+from typing import TypedDict,Literal,Annotated,Optional,List
 from langgraph.graph import StateGraph,START,END
 import asyncio
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
@@ -23,15 +23,21 @@ client = AsyncInferenceClient(token=hf_token)
 llm=ChatGroq(model="llama-3.3-70b-versatile", temperature=0,api_key=os.getenv("GROQ_API_KEY"))
 vision_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash",temperature=0,api_key=os.getenv("GOOGLE_API_KEY"))
 
+class ArticleSection(TypedDict):
+    section_title: str
+    paragraph_text: str
+    image_url: Optional[str] 
+    alt_text: Optional[str]
+
 class BaseState(TypedDict):
     User_query:str
     revised_query:str
     Outline:str
-    Draft:str
     Grading:bool
     Feedback:str
-    image_url: str  
+    images:list[dict]
     alt_text: str
+    article_sections: List[ArticleSection]
     Text_Grading: bool
     Text_Feedback: str
     Image_Grading: bool
@@ -156,6 +162,9 @@ async def research(state:BaseState)->str:
     else:
         # If the LLM already knew the answer, just return it
         return {"Outline":response.content}
+    
+class DraftOutput(BaseModel):
+    sections:List[ArticleSection]
 
 async def gen_draft(state:BaseState)->str:
 
@@ -217,10 +226,10 @@ async def gen_draft(state:BaseState)->str:
         ("system", system_prompt),
         ("human", human_prompt)
     ])
-    
-    flow=prompt|llm
+    structured_llm=llm.with_structured_output(DraftOutput)
+    flow=prompt|structured_llm
     response=await flow.ainvoke({"outline": outline,"target_audience": target_audience,"tone": tone,"revision_directive": revision_directive})
-    return {"Draft":response.content}
+    return {"article_sections":response.sections}
 
 class Gradee(BaseModel):
     is_pass: Annotated[bool,Field(description="Set to True if the draft is 100% factual and matches the formatting rules. Set to False if there are hallucinations or poor formatting.")]
@@ -228,7 +237,9 @@ class Gradee(BaseModel):
     
 async def check_hal(state:BaseState):
     outline=state["Outline"]
-    draft=state["Draft"]
+    sections = state["article_sections"]
+    # 2. Stitch the sections together into a single text block for the grader
+    compiled_draft = "\n\n".join([f"## {s['section_title']}\n{s['paragraph_text']}" for s in sections])
     system_prompt="""
     You are the Managing Editor and Chief Fact-Checker for a premium newsletter. Your objective is to review the writer's Draft against the original Research Blueprint to ensure strict quality and factual accuracy.
 
@@ -267,7 +278,7 @@ async def check_hal(state:BaseState):
     
     structured_llm=llm.with_structured_output(Gradee)
     flow=prompt|structured_llm
-    response=await flow.ainvoke({"outline": outline, "draft": draft})
+    response=await flow.ainvoke({"outline": outline,"draft":compiled_draft})
     return {
         "Grading": response.is_pass, 
         "Feedback": response.feedback
@@ -278,8 +289,9 @@ class ImageSearchQuery(BaseModel):
     alt_text: Annotated[str, Field(description="A brief 5-word description of the expected image.")]
 
 async def gen_image(state: BaseState):
-    draft = state["Draft"]
     previous_feedback = state.get("Image_Feedback", "")
+    sections = state["article_sections"]
+    updated_sections = []
     revision_directive = ""
     if previous_feedback and previous_feedback != "Perfect":
         revision_directive = f"""
@@ -298,40 +310,40 @@ async def gen_image(state: BaseState):
     2. Translate that theme into a physical, photographable scene. (e.g., If the article is about "AI disrupting finance," do not search for 'AI finance'. Search for 'stock market screens' or 'modern bank building').
     3. Generate a concise 2-3 word search query for the Pexels API.
     {revision_directive}
-    
+
     Keep queries simple, literal, and highly relevant to the overall summary of the text.
     """
-    
-    human_prompt = "**ARTICLE DRAFT TO SUMMARIZE:**\n\n{draft}"
-    
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", human_prompt)
-    ])
-    
-    editor_llm = llm.with_structured_output(ImageSearchQuery)
-    flow = prompt | editor_llm
-    llm_result = await flow.ainvoke({"draft": draft,"revision_directive": revision_directive}) 
+    for section in sections:
+        paragraph = section["paragraph_text"]
+        human_prompt = "**ARTICLE DRAFT TO SUMMARIZE:**\n\n{paragraph}"
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            ("human", human_prompt)
+        ])
+        editor_llm = llm.with_structured_output(ImageSearchQuery)
+        flow = prompt | editor_llm
+        llm_result = await flow.ainvoke({"paragraph": paragraph,"revision_directive": revision_directive}) 
 
-    api_key = os.getenv("PEXELS_API_KEY")
-    url = "https://api.pexels.com/v1/search"
-    params = {"query": llm_result.search_query, "per_page": 1, "orientation": "landscape"}
-    headers = {"Authorization": api_key}
-    
-    image_url = ""
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url, params=params, headers=headers)
-            response.raise_for_status() 
-            data = response.json()
-            if data.get("photos") and len(data["photos"]) > 0:
-                image_url = data["photos"][0]["src"]["landscape"]
-        except Exception as e:
-            print(f"Pexels Error: {e}")
-    return {
-        "image_url": image_url,
-        "alt_text": llm_result.alt_text
-    }
+        api_key = os.getenv("PEXELS_API_KEY")
+        url = "https://api.pexels.com/v1/search"
+        params = {"query": llm_result.search_query, "per_page": 1, "orientation": "landscape"}
+        headers = {"Authorization": api_key}
+        
+        image_url = ""
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(url, params=params, headers=headers)
+                response.raise_for_status() 
+                data = response.json()
+                if data.get("photos") and len(data["photos"]) > 0:
+                    image_url = data["photos"][0]["src"]["landscape"]
+            except Exception as e:
+                print(f"Pexels Error: {e}")
+            section["image_url"] = image_url
+            section["alt_text"] = llm_result.alt_text
+            updated_sections.append(section)
+    return {"article_sections": updated_sections}
    
 async def check_grade(state:BaseState)->Literal["Image_gen","Creating_draft"]:
     if state["Grading"]==True:
@@ -345,20 +357,26 @@ class FinalPublicationGrade(BaseModel):
     image_feedback: str = Field(description="Feedback for the photo editor. Write 'Perfect' if approved.")
 
 async def final_checking(state:BaseState):
-    draft=state["Draft"]
-    image_url=state.get("image_url","")
+    sections = state["article_sections"]
     system_prompt = "You are the Editor-in-Chief. Evaluate the final text for factual accuracy and ensure the image is a highly professional, relevant match."
+    message_content = [{"type": "text", "text": "Evaluate this entire newsletter and its images:"}]
+    for sec in sections:
+        # Add the text
+        message_content.append({"type": "text", "text": f"## {sec['section_title']}\n{sec['paragraph_text']}"})
+
+        # Add the image if it exists
+        if sec.get("image_url"):
+            message_content.append({
+                "type": "image_url", 
+                "image_url": {"url": sec["image_url"]}
+            })
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
-        ("human", [
-            {"type": "text", "text": "Evaluate this final text:\n\n{draft}"},
-            {"type": "text", "text": "Now, evaluate this attached image:"},
-            {"type": "image_url", "image_url": {"url": "{image_url}"}}
-        ])
+        ("human", message_content)
     ])
     grader_llm = vision_llm.with_structured_output(FinalPublicationGrade)
     flow = prompt | grader_llm
-    result = await flow.ainvoke({"draft": draft,"image_url": image_url})
+    result = await flow.ainvoke(prompt)
     
     return {
         "Text_Grading": result.text_approved,
