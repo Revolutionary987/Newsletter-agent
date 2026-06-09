@@ -5,7 +5,8 @@ import httpx
 from dotenv import load_dotenv
 load_dotenv()
 
-from typing import TypedDict,Literal,Annotated,Optional,List
+from typing import Literal,Annotated,Optional,List
+from typing_extensions import TypedDict
 from langgraph.graph import StateGraph,START,END
 import asyncio
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
