@@ -35,6 +35,7 @@ class BaseState(TypedDict):
     Outline:str
     Grading:bool
     Feedback:str
+    key_points: str
     images:list[dict]
     alt_text: str
     article_sections: List[ArticleSection]
@@ -59,6 +60,7 @@ def web_search(query:str)->str:
     
 async def query_rewrite(state:BaseState):
     user_query=state["User_query"]
+    key_points = state.get("key_points", "None specified by user.")
     system_prompt="""
     You are the Lead Query Architect for a premium tech and business publication. Your objective is to take a user's raw, often brief topic suggestion and expand it into a highly detailed, multi-faceted "Research Directive."
 
@@ -82,6 +84,9 @@ async def query_rewrite(state:BaseState):
     {user_query}
     </raw_query>
 
+    **MANDATORY KEY POINTS TO INVESTIGATE:**
+    {key_points}
+
     **EXECUTION DIRECTIVE:**
     Expand this raw input into the comprehensive Research Directive paragraph as defined in your instructions. Output ONLY the directive paragraph.
     """
@@ -92,7 +97,8 @@ async def query_rewrite(state:BaseState):
     flow=prompt|llm
     response=await flow.ainvoke(
         {
-          "user_query":user_query
+          "user_query":user_query,
+          "key_points":key_points
         }
     )
     return {"revised_query":response.content}
@@ -177,6 +183,7 @@ async def gen_draft(state:BaseState)->str:
     target_audience=state.get("audience", "General Public")
     tone=state.get("tone", "Professional")
     previous_feedback = state.get("Feedback", "")
+    key_points = state.get("key_points", "None specified by user.")
 
     system_prompt="""
     You are the Senior Editor and Lead Staff Writer for a premium, magazine-style newsletter. Your objective is to take the factual "Narrative Blueprint" provided by the Research team and transform it into a captivating, highly readable article.
@@ -189,6 +196,7 @@ async def gen_draft(state:BaseState)->str:
     - **No Hallucinations:** You must base your article STRICTLY on the facts provided in the blueprint. Do not invent new milestones, statistics, or events.
     - **Engaging Flow:** Seamlessly transition between the "Hook", the "Core Mechanics", and the "Broader Impact". Do not just list facts; tell the story of the technology, concept, or event.
     - **Formatting:** Use rich Markdown formatting. Include a compelling main Headline (`#`), subheadings for distinct sections (`##`), and bullet points where appropriate to break up dense technical mechanics.
+    - **Mandatory Inclusions:** You MUST weave the following specific points into the narrative: {key_points}
     - **Tone Alignment:** Strictly match the requested tone and tailor the vocabulary to the target audience.
 
     Output the final article in the following structure:
