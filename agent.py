@@ -395,6 +395,18 @@ async def final_checking(state:BaseState):
                 "type": "image_url", 
                 "image_url": {"url": sec["image_url"]}
             })
+    format_instruction = f"""
+    STOP! Evaluation complete. Now, pack your entire review into the required data structure.
+    
+    You are strictly forbidden from outputting conversational introductory remarks, greetings, markdown headers, or bullet points.
+    Output a SINGLE, clean, well-formed JSON object matching this schema blueprint precisely:
+    
+    {parser.get_format_instructions()}
+    
+    Your response must begin with '{{' and end with '}}'. Do not wrap the JSON in markdown code blocks (```json).
+    """
+    message_content.append({"type": "text", "text": format_instruction})
+    
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=message_content)
