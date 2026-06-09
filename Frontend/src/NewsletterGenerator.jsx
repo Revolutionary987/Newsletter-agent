@@ -2,29 +2,31 @@ import React, { useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 
 export default function NewsletterGenerator() {
+  // --- 1. All State Variables (Fixed and complete) ---
   const [topic, setTopic] = useState('');
   const [audience, setAudience] = useState('');
   const [tone, setTone] = useState('');
   const [length, setLength] = useState('');
   const [keyPoints, setKeyPoints] = useState('');
   const [instructions, setInstructions] = useState('');
+  
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState(null);
+  const [newsletterData, setNewsletterData] = useState(null);
 
+  // --- 2. The Submit Handler (Wired perfectly to your backend) ---
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsGenerating(true);
     setError(null);
     setNewsletterData(null);
 
-    // Combine extra form fields into the main topic query for the AI to process
+    // Keep the topic clean, only append extra instructions here
     let enrichedTopic = topic;
-    if (length) enrichedTopic += `. Desired length: ${length}.`;
-    if (keyPoints) enrichedTopic += ` Key points to cover: ${keyPoints}.`;
-    if (instructions) enrichedTopic += ` Extra instructions: ${instructions}.`;
+    if (instructions) enrichedTopic += `. Extra instructions: ${instructions}.`;
 
-    // Dynamically route to local dev or live Hugging Face Space
-    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    // Point to your live Hugging Face backend
+    const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://aicoder35235-newsletter.hf.space';
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
@@ -54,12 +56,13 @@ export default function NewsletterGenerator() {
       }
     } catch (err) {
       console.error("Generation error:", err);
-      setError(err.message || "Failed to generate newsletter. Please try again.");
+      setError(err.message || "Failed to connect to the AI Engine. Please try again.");
     } finally {
       setIsGenerating(false);
     }
   };
 
+  // --- 3. The UI Rendering ---
   return (
     <div className="min-h-screen bg-[#F9F9F6] text-slate-900 font-sans p-6 md:p-12 flex flex-col items-center justify-center">
       <style dangerouslySetInnerHTML={{__html: `
@@ -211,9 +214,48 @@ export default function NewsletterGenerator() {
                 {isGenerating ? 'GENERATING...' : 'GENERATE NEWSLETTER'}
               </button>
             </div>
-
           </form>
         </div>
+
+        {/* --- 4. The Results Area --- */}
+        
+        {/* Error Display */}
+        {error && (
+          <div className="mt-8 p-4 bg-red-50 border border-red-200 text-red-600 text-sm rounded-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Newsletter Display */}
+        {newsletterData && (
+          <div className="mt-16 bg-white border border-slate-200 p-8 md:p-12 shadow-sm">
+            {newsletterData.map((section, index) => (
+              <div key={index} className="mb-12 last:mb-0">
+                <h2 className="text-3xl font-serif font-bold text-slate-900 mb-6">
+                  {section.section_title}
+                </h2>
+                
+                {section.image_url && (
+                  <div className="mb-8">
+                    <img 
+                      src={section.image_url} 
+                      alt={section.alt_text || section.section_title}
+                      className="w-full h-auto object-cover rounded-sm"
+                    />
+                    {section.alt_text && (
+                      <p className="text-xs text-slate-400 mt-2 italic">{section.alt_text}</p>
+                    )}
+                  </div>
+                )}
+                
+                <div className="prose prose-slate max-w-none text-slate-700 leading-relaxed whitespace-pre-wrap">
+                  {section.paragraph_text}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
       </div>
     </div>
   );
