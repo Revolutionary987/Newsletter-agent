@@ -22,7 +22,7 @@ from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 
 # Connect to the free serverless API
 hf_endpoint = HuggingFaceEndpoint(
-    repo_id="meta-llama/Llama-3.2-11B-Vision-Instruct",
+    repo_id="google/gemma-4-26B-A4B-it",
     task="image-text-to-text",
     huggingfacehub_api_token=os.getenv("HF_TOKEN")
 )
