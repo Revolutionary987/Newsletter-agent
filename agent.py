@@ -18,9 +18,18 @@ from duckduckgo_search import DDGS
 from pydantic import BaseModel,Field
 from huggingface_hub import AsyncInferenceClient
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 
+# Connect to the free serverless API
+hf_endpoint = HuggingFaceEndpoint(
+    repo_id="meta-llama/Llama-3.2-11B-Vision-Instruct",
+    task="image-text-to-text",
+    huggingfacehub_api_token=os.getenv("HF_TOKEN")
+)
+vision_llm = ChatHuggingFace(llm=hf_endpoint)
 llm=ChatGroq(model="llama-3.3-70b-versatile", temperature=0,api_key=os.getenv("GROQ_API_KEY"))
-vision_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash",temperature=0,api_key=os.getenv("GOOGLE_API_KEY"))
+# vision_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash",temperature=0,api_key=os.getenv("GOOGLE_API_KEY"))
+vision_llm=ChatHuggingFace(llm=hf_endpoint)
 
 class ArticleSection(TypedDict):
     section_title: str
