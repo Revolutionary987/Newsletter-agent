@@ -9,6 +9,7 @@ export default function NewsletterGenerator() {
   const [keyPoints, setKeyPoints] = useState('');
   const [instructions, setInstructions] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
