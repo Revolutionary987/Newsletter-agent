@@ -21,7 +21,7 @@ class initial(BaseModel):
     tone: Optional[str] = "Professional"
 
 @app.post("/app/call")
-async def agent_call(request: InitialRequest):
+async def agent_call(request:initial):
     try:
         initial_state={
             "User_query": request.topic,
@@ -36,5 +36,5 @@ async def agent_call(request: InitialRequest):
             "status": "success",
             "data": sections
         }
-    except:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500,detail=str(e))
