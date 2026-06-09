@@ -22,4 +22,4 @@ EXPOSE 7860
 
 # Start the FastAPI server
 # Note: Ensure 'main:app' matches your filename and FastAPI variable
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["uvicorn", "backend:app", "--host", "0.0.0.0", "--port", "7860"]
