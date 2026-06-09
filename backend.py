@@ -10,7 +10,7 @@ load_dotenv()
 app=FastAPI()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://aegis-ui-l596.onrender.com","http://localhost:3000"], 
+    allow_origins=["https://aegis-ui-l596.onrender.com","http://localhost:3000","http://localhost:5173"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -20,7 +20,7 @@ class initial(BaseModel):
     audience: Optional[str] = "General Public"
     tone: Optional[str] = "Professional"
 
-@app.post("/app/call")
+@app.post("/api/v1/generate")
 async def agent_call(request:initial):
     try:
         initial_state={
@@ -28,7 +28,7 @@ async def agent_call(request:initial):
             "audience": request.audience,
             "tone": request.tone
         }
-        final_state=workflow.invoke(initial_state)
+        final_state=await workflow.ainvoke(initial_state)
         sections=final_state.get("article_section",[])
         if not sections:
             raise HTTPException(status_code=500, detail="Agent failed to generate sections.")

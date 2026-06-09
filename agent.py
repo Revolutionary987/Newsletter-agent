@@ -43,7 +43,7 @@ class BaseState(TypedDict):
 @tool
 def web_search(query:str)->str:
     try:
-        with DDGS as ddgs:
+        with DDGS() as ddgs:
             results=[result for result in ddgs.text(query,max_results=4)]
             if not results:
                 raise f"No results found for query: {query}"
@@ -53,6 +53,7 @@ def web_search(query:str)->str:
             return "\n".join(formatted_results)
     except Exception as e:
         return f"Search failed due to an error: {str(e)}"
+    
 async def query_rewrite(state:BaseState):
     user_query=state["User_query"]
     system_prompt="""
@@ -141,7 +142,7 @@ async def research(state:BaseState)->str:
         tone=tone
     )
     llm_with_tools = llm.bind_tools([web_search])
-    response=await llm.ainvoke(messages)
+    response=await llm_with_tools.ainvoke(messages)
     if response.tool_calls:
         messages.append(response)
         for tool_call in response.tool_calls:
@@ -231,7 +232,7 @@ async def gen_draft(state:BaseState)->str:
 
 class Gradee(BaseModel):
     is_pass: Annotated[bool,Field(description="Set to True if the draft is 100% factual and matches the formatting rules. Set to False if there are hallucinations or poor formatting.")]
-    feedback: Annotated[str,Field(description="If is_pass is True, write 'Approved'. If False, provide a strict, bulleted list of specific corrections the writer must make.")]\
+    feedback: Annotated[str,Field(description="If is_pass is True, write 'Approved'. If False, provide a strict, bulleted list of specific corrections the writer must make.")]
     
 async def check_hal(state:BaseState):
     outline=state["Outline"]
@@ -373,8 +374,7 @@ async def final_checking(state:BaseState):
         HumanMessage(content=message_content)
     ]
     grader_llm = vision_llm.with_structured_output(FinalPublicationGrade)
-    flow = messages| grader_llm
-    result = await flow.ainvoke(messages)
+    result = await grader_llm.ainvoke(messages)
     
     return {
         "Text_Grading": result.text_approved,
@@ -383,7 +383,7 @@ async def final_checking(state:BaseState):
         "Image_Feedback": result.image_feedback
     }
 
-async def check(state:BaseState)->Literal["Creating_draft","Image_gen"]:
+async def check(state:BaseState)->Literal["Creating_draft","Image_gen","__end__"]:
     if state["Text_Grading"]==False:
         return "Creating_draft"
     elif state["Image_Grading"]==False:
