@@ -13,11 +13,48 @@ export default function NewsletterGenerator() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsGenerating(true);
-    
-    // Simulating generation delay for UI demonstration
-    setTimeout(() => {
+    setError(null);
+    setNewsletterData(null);
+
+    // Combine extra form fields into the main topic query for the AI to process
+    let enrichedTopic = topic;
+    if (length) enrichedTopic += `. Desired length: ${length}.`;
+    if (keyPoints) enrichedTopic += ` Key points to cover: ${keyPoints}.`;
+    if (instructions) enrichedTopic += ` Extra instructions: ${instructions}.`;
+
+    // Dynamically route to local dev or live Hugging Face Space
+    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          topic: enrichedTopic, 
+          audience: audience || "General Public", 
+          tone: tone || "Professional" 
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server responded with status ${response.status}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.status === 'success' && result.data) {
+        setNewsletterData(result.data);
+      } else {
+        throw new Error('Invalid data format received from the server.');
+      }
+    } catch (err) {
+      console.error("Generation error:", err);
+      setError(err.message || "Failed to generate newsletter. Please try again.");
+    } finally {
       setIsGenerating(false);
-    }, 2000);
+    }
   };
 
   return (
