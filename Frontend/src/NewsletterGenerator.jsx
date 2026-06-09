@@ -34,7 +34,9 @@ export default function NewsletterGenerator() {
         body: JSON.stringify({ 
           topic: enrichedTopic, 
           audience: audience || "General Public", 
-          tone: tone || "Professional" 
+          tone: tone || "Professional",
+          length: length || "medium",
+          key_points: keyPoints || "None"
         }),
       });
 
