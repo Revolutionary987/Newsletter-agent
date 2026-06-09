@@ -20,6 +20,7 @@ class initial(BaseModel):
     audience: Optional[str] = "General Public"
     tone: Optional[str] = "Professional"
     length:Literal["short", "medium", "long"]
+    key_points=Optional[str]=None
 
 @app.post("/api/v1/generate")
 async def agent_call(request:initial):
@@ -28,7 +29,8 @@ async def agent_call(request:initial):
             "User_query": request.topic,
             "audience": request.audience,
             "tone": request.tone,
-            "length":request.length
+            "length":request.length,
+            "key_points":request.key_points
         }
         final_state=await workflow.ainvoke(initial_state)
         sections=final_state.get("article_sections",[])
