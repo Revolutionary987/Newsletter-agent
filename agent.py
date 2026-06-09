@@ -42,6 +42,7 @@ class BaseState(TypedDict):
     Image_Feedback: str
 @tool
 def web_search(query:str)->str:
+    """Searches the web using DuckDuckGo to return relevant factual summaries."""
     try:
         with DDGS() as ddgs:
             results=[result for result in ddgs.text(query,max_results=4)]
