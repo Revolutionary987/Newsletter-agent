@@ -31,7 +31,7 @@ hf_endpoint = HuggingFaceEndpoint(
     task="image-text-to-text",
     huggingfacehub_api_token=os.getenv("HF_TOKEN")
 )
-llm=ChatOpenAI(base_url="https://openrouter.ai/api/v1",api_key=os.getenv("OPENROUTER_API_KEY"),model="llama-3.3-70b-versatile",temperature=0.1)
+llm=ChatOpenAI(base_url="https://openrouter.ai/api/v1",api_key=os.getenv("OPENROUTER_API_KEY"),model="meta-llama/llama-3.3-70b-instruct:free",temperature=0.1)
 
 vision_llm = ChatHuggingFace(llm=hf_endpoint)
 
