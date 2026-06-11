@@ -31,7 +31,12 @@ hf_endpoint = HuggingFaceEndpoint(
     task="image-text-to-text",
     huggingfacehub_api_token=os.getenv("HF_TOKEN")
 )
-llm=ChatOpenAI(base_url="https://openrouter.ai/api/v1",api_key=os.getenv("OPENROUTER_API_KEY"),model="meta-llama/llama-3.3-70b-instruct:free",temperature=0.1)
+llm=ChatOpenAI(base_url="https://openrouter.ai/api/v1",api_key=os.getenv("OPENROUTER_API_KEY"),model="meta-llama/llama-3.3-70b-instruct:free",temperature=0.1,extra_body={
+        "models": [
+            "qwen/qwen3-next-80b-a3b-instruct:free",
+            "openai/gpt-oss-20b:free",
+        ]
+    })
 
 vision_llm = ChatHuggingFace(llm=hf_endpoint)
 
@@ -46,6 +51,8 @@ class BaseState(TypedDict):
     revised_query:str
     length:str
     final_article:str
+    target_audience: str 
+    tone: str
     Grading:bool
     Feedback:str
     key_points: str
@@ -57,51 +64,181 @@ class BaseState(TypedDict):
     Text_Feedback: str
     Image_Grading: bool
     Image_Feedback: str
-    
-async def query_rewrite(state:BaseState):
-    user_query=state["User_query"]
-    key_points = state.get("key_points", "None specified by user.")
-    system_prompt="""
-    You are the Lead Query Architect for a premium tech and business publication. Your objective is to take a user's raw, often brief topic suggestion and expand it into a highly detailed, multi-faceted "Research Directive."
 
-    This directive will be passed to an autonomous Research Agent that relies on web search tools. If your output is too broad, the agent will fail to find specific, compelling facts.
+LENGTH_INSTRUCTIONS = {
+    "Short (500–700 words)": (
+        "Write a SHORT newsletter totalling 500–700 words across all sections combined. "
+        "Use 3–4 sections. Every sentence must earn its place — no padding, no recap."
+    ),
+    "Medium (900–1200 words)": (
+        "Write a MEDIUM newsletter totalling 900–1200 words across all sections combined. "
+        "Use 4–5 sections with solid paragraph depth per section."
+    ),
+    "Long (1500–2000 words)": (
+        "Write a LONG newsletter totalling 1500–2000 words across all sections combined. "
+        "Use 5–7 sections. Include at least one data grid or timeline table in Markdown."
+    ),
+    "Deep-dive (2500+ words)": (
+        "Write a DEEP-DIVE newsletter of 2500+ words across all sections combined. "
+        "Use 6–8 sections with exhaustive technical depth, multiple data tables, "
+        "and a Mermaid flowchart for any pipeline or architecture described."
+    ),
+}
 
-    INSTRUCTIONS:
-    1. Analyze the user's raw input and identify the core subject.
-    2. Break the subject down into 3-4 highly specific sub-topics or "angles" that the Research Agent must investigate (e.g., technological mechanics, market impact, regulatory hurdles, or historical context).
-    3. Identify 2-3 specific keywords or exact phrases the Research Agent should use in its search queries to find the most recent, high-quality data.
-    4. Output your expansion strictly as a cohesive, highly detailed paragraph. Do not use bullet points or conversational filler.
+AUDIENCE_STYLE = {
+    "General Public": (
+        "Write for curious, intelligent non-specialists. "
+        "Define every technical term the first time it appears. "
+        "Use real-world analogies to ground abstract concepts. "
+        "Short sentences. Active voice. Never assume prior domain knowledge."
+    ),
+    "Tech Enthusiasts": (
+        "Assume the reader is comfortable with software architecture, APIs, and benchmarks. "
+        "Lead with technical mechanics before business context. "
+        "Include specific version numbers, model names, and performance figures where available. "
+        "Readers want depth — never simplify a concept that doesn't need simplifying."
+    ),
+    "Executives": (
+        "Open every section with the business implication, not the technical detail. "
+        "Frame data as decisions: what does this mean for budget, risk, or competitive position? "
+        "Use tight, scannable prose with clear headers. "
+        "One insight per paragraph. No jargon without a one-sentence plain-English translation."
+    ),
+    "Students": (
+        "Teach from the ground up. "
+        "Start each section with a clear learning objective stated as a question. "
+        "Progress from core concept → real-world example → broader implication. "
+        "Include a 'Key takeaway' sentence at the end of each section. "
+        "An encouraging, intellectually curious tone throughout."
+    ),
+    "Investors": (
+        "Lead with market size, TAM, growth rate, and competitive moat. "
+        "Frame every technical development as a financial signal. "
+        "Include valuation context, funding rounds, or revenue data where available. "
+        "Explicitly name risk factors alongside opportunities. "
+        "Think: what would a venture partner or fund manager need before writing a check?"
+    ),
+    "Researchers": (
+        "Write with academic precision. "
+        "Every empirical claim must reference its source citation inline. "
+        "Acknowledge methodological limitations and conflicting findings — do not smooth them over. "
+        "Avoid superlatives and marketing framing. "
+        "Prefer passive constructions where they are standard in the field."
+    ),
+}
 
-    Your output must act as the ultimate, foolproof set of instructions for the downstream Research Agent.
+TONE_INSTRUCTIONS = {
+    "Professional & Objective": (
+        "Neutral, measured, authoritative. "
+        "Present multiple perspectives where they exist. "
+        "No editorialising. No exclamation marks. "
+        "The reader should trust this as a reliable briefing document."
+    ),
+    "Inspiring": (
+        "Forward-looking, energising, optimistic without being naive. "
+        "Frame every challenge as a solvable problem. "
+        "End each major section with a sentence that points toward possibility, not just current state. "
+        "Verbs should be active and strong."
+    ),
+    "Conversational": (
+        "Write like a brilliant friend who happens to be an expert. "
+        "Contractions are fine. Rhetorical questions welcome. "
+        "Vary sentence length deliberately — short punchy sentences after complex ones. "
+        "Never sound like a press release."
+    ),
+    "Analytical": (
+        "Logic-first. Every paragraph should follow a claim → evidence → implication structure. "
+        "Quantify wherever possible. "
+        "Flag uncertainty explicitly ('data is limited here', 'this is one interpretation'). "
+        "No flourish — precision over style."
+    ),
+    "Educational": (
+        "The primary goal is understanding, not just information transfer. "
+        "Use the 'explain then exemplify' pattern throughout. "
+        "Bold the single most important concept in each section. "
+        "Summaries and 'what this means in practice' callouts are expected."
+    ),
+    "Bold & Opinionated": (
+        "Take a clear, defensible position and hold it. "
+        "Do not hedge with 'some argue' or 'it could be said'. "
+        "Back opinions with cited evidence, but don't shy from the conclusion. "
+        "The reader should finish feeling they've heard a sharp point of view, not a survey."
+    ),
+}
+RESEARCH_DEPTH = {
+    "Short (500–700 words)": (
+        "Focus on high-signal, top-level data. Retrieve the 2-3 most impactful current statistics and a clear overarching narrative. "
+        "Do not hunt for exhaustive historical timelines, edge cases, or deep technical specs. Keep the search tight and focused on immediate relevance."
+    ),
+    "Medium (900–1200 words)": (
+        "Gather a balanced mix of macro context and specific supporting data. Target at least two distinct sub-topics or perspectives. "
+        "Retrieve recent benchmarks, named examples, and at least one concrete case study to ground the concepts."
+    ),
+    "Long (1500–2000 words)": (
+        "Hunt for comprehensive, multi-layered data. Retrieve historical context, comparative industry benchmarks, and multiple case studies. "
+        "Specifically seek out structured data points, timelines, and contrasting viewpoints that can be used to build data tables."
+    ),
+    "Deep-dive (2500+ words)": (
+        "Conduct an exhaustive, granular search. Retrieve raw datasets, architectural or pipeline specifics, edge cases, expert quotes, and deep methodological details. "
+        "Hunt for niche sub-topics, regulatory impacts, and future projections. The agent must return enough raw material to sustain intense technical analysis."
+    ),
+}
+async def query_rewrite(state:BaseState)->dict:
     """
-
-    human_prompt="""
-    **QUERY EXPANSION INITIATION**
-    Please process the following raw user input.
-
-    **RAW USER INPUT:**
-    <raw_query>
-    {user_query}
-    </raw_query>
-
-    **MANDATORY KEY POINTS TO INVESTIGATE:**
-    {key_points}
-
-    **EXECUTION DIRECTIVE:**
-    Expand this raw input into the comprehensive Research Directive paragraph as defined in your instructions. Output ONLY the directive paragraph.
+    Expands the raw topic into a multi-angle research directive.
+    Translates the final article's Tone, Audience, and Length into 
+    specific data-gathering instructions for the web search agent.
     """
-    prompt=ChatPromptTemplate.from_messages([
+    system_prompt = """You are the Lead Research Director for a premium global publication. Your job is to take a raw user topic and write a precise, multi-angle Research Directive for an autonomous web-search agent.
+
+    The agent can only find what you tell it to look for. Your directive dictates the quality of the final article. 
+
+    INSTRUCTIONS FOR SYNTHESIZING THE PROFILES:
+    - Use the target 'Length/Depth' to tell the agent exactly how broad, granular, and exhaustive its search must be.
+    - Use the target 'Audience' and 'Tone' to tell the agent WHICH sources to trust and WHAT KIND of data to prioritize (e.g., if the audience is Investors, tell the agent to hunt for financial reports and market sizing; if the tone is Analytical, demand raw numbers over opinion pieces).
+
+    WRITE A SINGLE DENSE PARAGRAPH that covers all of the following:
+    1. The core technical or subject-matter angles to investigate.
+    2. The specific data types to retrieve (statistics, dollar figures, benchmarks, named entities, dates).
+    3. The exact types of sources to prioritize based on the audience/tone profiles.
+    4. The mandatory key points (if any) as non-negotiable investigation targets.
+    5. Two or three exact search phrases in quotes that will surface high-quality 2025–2026 data.
+
+    Output ONLY the directive paragraph. No headers, no bullet points, no preamble."""
+    audience_key = state.get("target_audience", "General Public")
+    tone_key = state.get("tone", "Professional & Objective")
+    length_key = state.get("length", "Medium (900–1200 words)")
+    audience_desc = AUDIENCE_STYLE.get(audience_key, AUDIENCE_STYLE["General Public"])
+    tone_desc = TONE_INSTRUCTIONS.get(tone_key, TONE_INSTRUCTIONS["Professional & Objective"])
+    depth_desc = RESEARCH_DEPTH.get(length_key, RESEARCH_DEPTH["Medium (900–1200 words)"])
+
+    human_prompt = """Raw topic: {user_query}
+
+    TARGET AUDIENCE & TONE (Translate these writing goals into what data/sources to hunt for):
+    - Audience: {audience_desc}
+    - Tone: {tone_desc}
+
+    RESEARCH DEPTH REQUIRED:
+    {depth_desc}
+
+    Key points that MUST be covered: {key_points}
+
+    Write the Research Directive now."""
+
+    prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
-        ("human", human_prompt)
+        ("human", human_prompt),
     ])
-    flow=prompt|llm
-    response=await flow.ainvoke(
-        {
-          "user_query":user_query,
-          "key_points":key_points
-        }
-    )
-    return {"revised_query":response.content}
+    
+    response = await (prompt | llm).ainvoke({
+        "user_query":    state["User_query"],
+        "audience_desc": audience_desc,
+        "tone_desc":     tone_desc,
+        "depth_desc":    depth_desc,
+        "key_points":    state.get("key_points") or "None specified — cover the topic comprehensively.",
+    })
+    
+    return {"revised_query": response.content}
 
 class DraftOutput(BaseModel):
     sections:List[ArticleSection]
@@ -115,35 +252,49 @@ async def check_hal(state:BaseState):
     sections = state["article_sections"]
     final_article=state["final_article"]
     compiled_draft = "\n\n".join([f"## {s['section_title']}\n{s['paragraph_text']}" for s in sections])
+    audience_key = state.get("target_audience", "General Public")
+    tone_key = state.get("tone", "Professional & Objective")
+    length_key = state.get("length", "Medium (900–1200 words)")
+    
+    audience_desc = AUDIENCE_STYLE.get(audience_key, AUDIENCE_STYLE["General Public"])
+    tone_desc = TONE_INSTRUCTIONS.get(tone_key, TONE_INSTRUCTIONS["Professional & Objective"])
+    length_desc = LENGTH_INSTRUCTIONS.get(length_key, LENGTH_INSTRUCTIONS["Medium (900–1200 words)"])
     system_prompt="""
-    You are the Managing Editor and Chief Fact-Checker for a premium newsletter. Your objective is to review the writer's Draft against the original Research Blueprint to ensure strict quality and factual accuracy.
+    You are the Managing Editor and Chief Fact-Checker for a premium publication. Evaluate the submitted draft on three strict criteria.
 
-    You must evaluate the draft on two criteria:
-    1. FACTUAL GROUNDING (Hallucination Check): Does the draft contain any statistics, dates, quotes, or claims that are NOT present in the Narrative Blueprint? If it contains invented facts, it fails.
-    2. EDITORIAL GRADING: Does the draft strictly follow the requested formatting (Markdown headers, bullet points) and match the requested tone? Is it engaging to read?
+    CRITERION 1 — FACTUAL GROUNDING (Hallucination Check):
+    Read every statistic, date, company name, product name, and monetary figure in the draft. Cross-reference each against the Research Blueprint. If the draft contains ANY claim, number, or specific fact that is not present in or directly inferrable from the blueprint, it fails.
 
-    You must output your evaluation strictly as a JSON object with the following schema:
-    - "is_pass" (boolean): true if the draft is perfectly factual and well-written. false if it contains hallucinations or poor formatting.
-    - "feedback" (string): If is_pass is true, output "Approved." If is_pass is false, provide a direct, actionable list of exactly what the writer needs to fix (e.g., "Remove the hallucinated date in paragraph 2. Make the tone more professional.").
+    CRITERION 2 — TONE & AUDIENCE ALIGNMENT:
+    Evaluate the draft against the Target Audience and Tone profiles provided. Does the vocabulary match the audience's expertise? Does it follow the specific stylistic rules dictated by the tone?
 
-    Do not output any text outside of this JSON structure.
+    CRITERION 3 — LENGTH, STRUCTURE & EDITORIAL QUALITY:
+    Evaluate against the Length & Structure constraints. 
+    - Does it look like it hits the rough word count and section count requirements?
+    - Are mandatory elements (like tables or flowcharts) present if required by the length profile?
+    - Does it use proper Markdown heading hierarchy (H1 for title, H2 for sections)?
+    - Does it avoid generic AI transition phrases (e.g., "In conclusion", "It is important to note")?
+
+    If ALL criteria pass, set is_pass to True and feedback to exactly "Approved."
+    If ANY criterion fails, set is_pass to False and provide a numbered list of highly specific corrections the writer must make.
     """
     human_prompt="""
-    **QUALITY ASSURANCE REVIEW COMMAND**
-    Evaluate the following draft.
-
-    **THE FACTUAL BLUEPRINT (Source of Truth):**
-    <blueprint>
+    RESEARCH BLUEPRINT (Source of Truth):
     {cleaned_content}
-    </blueprint>
 
-    **THE GENERATED DRAFT (Text to Evaluate):**
-    <draft>
+    TARGET AUDIENCE PROFILE:
+    {audience_desc}
+
+    TONE PROFILE:
+    {tone_desc}
+
+    LENGTH & STRUCTURE CONSTRAINTS:
+    {length_desc}
+
+    SUBMITTED DRAFT:
     {final_article}
-    </draft>
 
-    **EVALUATION DIRECTIVE:**
-    Compare the <draft> to the <blueprint>. Output your JSON evaluation dictating whether the draft is approved to publish or requires a rewrite.
+    Evaluate the draft against all three criteria now
     """
 
     prompt = ChatPromptTemplate.from_messages([
@@ -159,65 +310,121 @@ async def check_hal(state:BaseState):
         "Feedback": response.feedback
         }
 
-class ImageSearchQuery(BaseModel):
-    search_query: Annotated[str, Field(description="A highly targeted 2-3 word search query to find a real photograph on Pexels. Keep it literal.")]
-    alt_text: Annotated[str, Field(description="A brief 5-word description of the expected image.")]
+class SmartImageDirectives(BaseModel):
+    pexels_query: Annotated[str, Field(
+        description=(
+            "A 2–3 word literal, physical search query for a real stock photo. "
+            "Strictly nouns and objects. No abstract words like 'AI' or 'future'. "
+            "Examples: 'boardroom meeting', 'warehouse automation', 'laboratory drone'."
+        )
+    )]
+    flux_prompt: Annotated[str, Field(
+        description=(
+            "A detailed, highly photorealistic, cinematic prompt for FLUX.1. "
+            "Describe a real physical scene with lighting, mood, camera framing, and textures. "
+            "Example: 'Candid wide-angle photograph of an advanced automated robotic warehouse floor, "
+            "soft geometric amber overhead lighting, realistic metallic surfaces, volumetric dust motes, shot on 35mm lens, photorealistic.'"
+        )
+    )]
+    alt_text: Annotated[str, Field(
+        description="A plain 5–8 word description of what the visual shows for accessibility."
+    )]
 
 async def gen_image(state: BaseState):
     previous_feedback = state.get("Image_Feedback", "")
-    sections = state["article_sections"]
+    sections = state.get("article_sections", [])
     updated_sections = []
+    
     revision_directive = ""
-    if previous_feedback and previous_feedback != "Perfect":
+    if previous_feedback and previous_feedback not in ("Perfect", "Approved"):
         revision_directive = f"""
         **CRITICAL REVISION DIRECTIVE:**
-        Your previous image search query was REJECTED for the following reason:
+        Your previous image generation assets were REJECTED by the editor for the following reason:
         {previous_feedback}
         
-        You must generate a COMPLETELY DIFFERENT search query this time to fix the issue.
+        You MUST change your approach completely for both the pexels_query and flux_prompt to fix this error.
         """
-    
     system_prompt = """You are the Lead Photo Editor for a premium business and tech publication.
-    Your job is to read the finalized article draft and select the perfect hero image to sit at the top of the page.
+    Your job is to read a specific section of an article draft and generate two distinct image-retrieval directives to illustrate that exact section.
     
-    INSTRUCTIONS:
-    1. Read the draft and identify the CORE THEME or main subject.
-    2. Translate that theme into a physical, photographable scene. (e.g., If the article is about "AI disrupting finance," do not search for 'AI finance'. Search for 'stock market screens' or 'modern bank building').
-    3. Generate a concise 2-3 word search query for the Pexels API.
+    Because our system uses a smart waterfall pipeline, you must provide inputs for two completely different engines:
+
+    1. FOR THE PEXELS ENGINE (Stock Photo Search):
+    - Generate an ultra-focused 2-3 word literal search query.
+    - Translate abstract concepts into physical objects (e.g., instead of 'cybersecurity', use 'locked laptop' or 'server rack').
+    - Never include words like 'AI', 'data', 'future', 'technology'.
+
+    2. FOR THE FLUX ENGINE (AI Image Generation):
+    - Generate a highly descriptive, cinematic prompt.
+    - Enforce an editorial style: demand high realism, specific camera lenses (e.g., 'shot on 35mm lens'), professional lighting, and crisp details.
+    - Avoid cartoonish or standard 3D-rendered styling. It must look like high-end photojournalism.
+
     {revision_directive}
-
-    Keep queries simple, literal, and highly relevant to the overall summary of the text.
     """
-    for section in sections:
-        paragraph = section["paragraph_text"]
-        human_prompt = "**ARTICLE DRAFT TO SUMMARIZE:**\n\n{paragraph}"
-        
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human", human_prompt)
-        ])
-        editor_llm = llm.with_structured_output(ImageSearchQuery)
-        flow = prompt | editor_llm
-        llm_result = await flow.ainvoke({"paragraph": paragraph,"revision_directive": revision_directive}) 
+    editor_llm = llm.with_structured_output(SmartImageDirectives)
 
-        api_key = os.getenv("PEXELS_API_KEY")
-        url = "https://api.pexels.com/v1/search"
-        params = {"query": llm_result.search_query, "per_page": 1, "orientation": "landscape"}
-        headers = {"Authorization": api_key}
-        
-        image_url = ""
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(url, params=params, headers=headers)
-                response.raise_for_status() 
-                data = response.json()
-                if data.get("photos") and len(data["photos"]) > 0:
-                    image_url = data["photos"][0]["src"]["landscape"]
-            except Exception as e:
-                print(f"Pexels Error: {e}")
+    async with httpx.AsyncClient() as client:
+        for section in sections:
+            paragraph = section.get("paragraph_text", "")
+            human_prompt = "**ARTICLE SECTION TO ILLUSTRATE:**\n\n{paragraph}"
+            
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", human_prompt)
+            ])
+            
+            flow = prompt | editor_llm
+            llm_result = await flow.ainvoke({
+                "paragraph": paragraph, 
+                "revision_directive": revision_directive
+            }) 
+
+            image_url = ""
+            source_used = "None"
+            pexels_key = os.getenv("PEXELS_API_KEY")
+            if pexels_key:
+                try:
+                    p_url = "https://api.pexels.com/v1/search"
+                    p_params = {"query": llm_result.pexels_query, "per_page": 1, "orientation": "landscape"}
+                    p_headers = {"Authorization": pexels_key}
+                    
+                    response = await client.get(p_url, params=p_params, headers=p_headers, timeout=10.0)
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data.get("photos") and len(data["photos"]) > 0:
+                            image_url = data["photos"][0]["src"]["landscape"]
+                            source_used = "Pexels"
+                except Exception as e:
+                    print(f"Pexels Error: {e}")
+
+            if not image_url:
+                hf_token = os.getenv("HF_TOKEN")
+                if hf_token:
+                    hf_url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+                    hf_headers = {"Authorization": f"Bearer {hf_token}"}
+                    hf_payload = {"inputs": llm_result.flux_prompt}
+                    for attempt in range(3):
+                        try:
+                            hf_res = await client.post(hf_url, headers=hf_headers, json=hf_payload, timeout=60.0)
+                            
+                            if hf_res.status_code == 503:
+                                print(f"HF Model warming up. Waiting 15s... (Attempt {attempt+1}/3)")
+                                await asyncio.sleep(15)
+                                continue
+                                
+                            if hf_res.status_code == 200:
+                                b64_img = base64.b64encode(hf_res.content).decode('utf-8')
+                                image_url = f"data:image/jpeg;base64,{b64_img}"
+                                source_used = "Flux AI"
+                                break
+                        except Exception as e:
+                            print(f"Flux Error: {e}")
+                            break
             section["image_url"] = image_url
             section["alt_text"] = llm_result.alt_text
+            section["image_source"] = source_used 
             updated_sections.append(section)
+
     return {"article_sections": updated_sections}
    
 async def check_grade(state:BaseState)->Literal["Image_gen","Subgraph"]:
@@ -225,78 +432,80 @@ async def check_grade(state:BaseState)->Literal["Image_gen","Subgraph"]:
         return "Image_gen"
     else:
         return "Subgraph"
+    
 class FinalPublicationGrade(BaseModel):
-    text_approved: bool = Field(description="True if text is factual and formatted correctly.")
-    text_feedback: str = Field(description="Feedback for the writer. Write 'Perfect' if approved.")
-    image_approved: bool = Field(description="True if the image matches the text perfectly.")
-    image_feedback: str = Field(description="Feedback for the photo editor. Write 'Perfect' if approved.")
+    text_approved: bool = Field(description="True if the layout, formatting, and markdown structures are flawless.")
+    text_feedback: str = Field(description="Feedback regarding layout or syntax fixes. Write 'Perfect' if approved.")
+    image_approved: bool = Field(description="True if the generated image matches the contextual theme of its section perfectly.")
+    image_feedback: str = Field(description="Highly specific feedback for the photo editor explaining why an image doesn't align with the text. Write 'Perfect' if approved.")
 
-async def final_checking(state:BaseState):
-    sections = state["article_sections"]
-    parser = PydanticOutputParser(pydantic_object=FinalPublicationGrade)
-    system_prompt = "You are the Editor-in-Chief. Evaluate the final text for factual accuracy and ensure the image is a highly professional, relevant match."
-    message_content = [{"type": "text", "text": "Evaluate this entire newsletter and its images:"}]
+async def final_checking(state: BaseState) -> dict:
+    sections = state.get("article_sections", [])
+    
+    system_prompt = """You are the Editor-in-Chief of a high-end, premium global tech and business publication. Your final task is to run a rigorous multi-modal audit on the compiled document layout.
+
+    Analyze the layout across three non-negotiable criteria:
+
+    CRITERION 1: LANGUAGE QUALITY & TONE INTEGRITY
+    - Audit the prose for professional readability, clean markdown headers (H2 for sections), and total elimination of lazy AI phrases.
+    - Check that the information flows organically between sections without disjointed transitions or structural blanks.
+
+    CRITERION 2: VISUAL QUALITY & AESTHETIC STANDARDS
+    - Inspect the visual elements for professional artistic execution.
+    - Reject assets that suffer from rendering artifacts, extreme blurriness, distortion, or cheap vector clip-art styles. Every visual must look like premium editorial design.
+
+    CRITERION 3: CROSS-MODAL SYNCHRONIZATION (THE MATCH)
+    - Evaluate the absolute coordination between the image and the text section it is bound to.
+    - The visual assets must represent the concrete nouns, actions, or underlying data trends described in the paragraph. A high-quality text paired with an irrelevant or generic stock asset must fail.
+
+    Populate the FinalPublicationGrade structure with rigorous precision based on these rules."""
+
+    message_content = [{"type": "text", "text": "Begin premium publication layout audit now:"}]
+    
     for sec in sections:
-        # Add the text
-        message_content.append({"type": "text", "text": f"## {sec['section_title']}\n{sec['paragraph_text']}"})
+        message_content.append({
+            "type": "text", 
+            "text": f"## {sec.get('section_title', '')}\n{sec.get('paragraph_text', '')}"
+        })
 
-        # Add the image if it exists
         if sec.get("image_url"):
             message_content.append({
                 "type": "image_url", 
                 "image_url": {"url": sec["image_url"]}
             })
-    format_instruction = f"""
-    STOP! Evaluation complete. Now, pack your entire review into the required data structure.
-    
-    You are strictly forbidden from outputting conversational introductory remarks, greetings, markdown headers, or bullet points.
-    Output a SINGLE, clean, well-formed JSON object matching this schema blueprint precisely:
-    
-    {parser.get_format_instructions()}
-    
-    Your response must begin with '{{' and end with '}}'. Do not wrap the JSON in markdown code blocks (```json).
-    """
-    message_content.append({"type": "text", "text": format_instruction})
-    
+
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=message_content)
     ]
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            raw_response = await vision_llm.ainvoke(messages)
-            content = raw_response.content if hasattr(raw_response, 'content') else str(raw_response)
-            json_match = re.search(r'\{.*\}', content, re.DOTALL)
-            if json_match:
-                clean_json_str = json_match.group(0)
-                data = json.loads(clean_json_str)
-                return {
-                    "Text_Grading": data.get("text_approved", data.get("Text_Grading", False)),
-                    "Text_Feedback": data.get("text_feedback", data.get("Text_Feedback", "No text feedback provided")),
-                    "Image_Grading": data.get("image_approved", data.get("Image_Grading", False)),
-                    "Image_Feedback": data.get("image_feedback", data.get("Image_Feedback", "No image feedback provided"))
-                }
-            else:
-                result = parser.parse(content)
-                return {
-                    "Text_Grading": result.text_approved,
-                    "Text_Feedback": result.text_feedback,
-                    "Image_Grading": result.image_approved,
-                    "Image_Feedback": result.image_feedback
-                }
-        except Exception as e:
-            print(f"JSON Parsing failed on attempt {attempt + 1}: {e}")
-            if attempt == max_retries - 1:
-                raise ValueError("The Editor Agent failed to format its grading response. Aborting publication for safety.")
 
-async def check(state:BaseState)->Literal["Subgraph","Image_gen","__end__"]:
-    if state["Text_Grading"]==False:
-        return "Subgraph"
-    elif state["Image_Grading"]==False:
-        return "Image_gen"
+    try:
+        structured_vision_llm = vision_llm.with_structured_output(FinalPublicationGrade)
+        result = await structured_vision_llm.ainvoke(messages)
+        
+        return {
+            "Text_Grading": result.text_approved,
+            "Text_Feedback": result.text_feedback,
+            "Image_Grading": result.image_approved,
+            "Image_Feedback": result.image_feedback
+        }
+    except Exception as e:
+        print(f"Layout Vision Review Node Error: {e}")
+        # Fail-safe state update: route back into the generator systems to maintain stability
+        return {
+            "Text_Grading": False,
+            "Text_Feedback": "Pipeline execution warning: Evaluation framework timed out. Re-verifying text composition rules.",
+            "Image_Grading": False,
+            "Image_Feedback": "Pipeline execution warning: Asset validation layer exception. Force-regenerating visual layout blocks."
+        }
+
+def check(state: BaseState) -> Literal["Subgraph", "Image_gen", "__end__"]:
+    if not state.get("Text_Grading", False):
+        return "Subgraph"  
+    elif not state.get("Image_Grading", False):
+        return "Image_gen"  
     else:
-        return END
+        return "__end__"
     
 graph=StateGraph(BaseState)
 graph.add_node("Rewrite_query",query_rewrite)

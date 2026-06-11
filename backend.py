@@ -20,8 +20,15 @@ class initial(BaseModel):
     topic: str
     audience: Optional[str] = "General Public"
     tone: Optional[str] = "Professional"
-    length:Literal["short", "medium", "long"]
+    length:Literal["short", "medium", "long","deep-dive"]
     key_points:Optional[str]=None
+    \
+LENGTH_MAP = {
+    "short": "Short (500–700 words)",
+    "medium": "Medium (900–1200 words)",
+    "long": "Long (1500–2000 words)",
+    "deep-dive": "Deep-dive (2500+ words)"
+}
 
 @app.post("/api/v1/generate")
 async def agent_call(request:initial):
@@ -30,7 +37,7 @@ async def agent_call(request:initial):
             "User_query": request.topic,
             "audience": request.audience,
             "tone": request.tone,
-            "length":request.length,
+            "length": LENGTH_MAP.get(request.length, "Medium (900–1200 words)"),
             "key_points":request.key_points
         }
         final_state=await workflow.ainvoke(initial_state)

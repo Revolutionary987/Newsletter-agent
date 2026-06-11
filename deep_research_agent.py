@@ -13,16 +13,46 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-research_llm = ChatOpenAI(
+from langchain_openai import ChatOpenAI
+
+# 1. Instantiate the individual models clearly
+llama_main = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
-    model="llama-3.3-70b-versatile",
+    model="meta-llama/llama-3.3-70b-instruct:free",
+    temperature=0.1,
+    max_retries=1 # Fail fast so it can trigger the fallback instantly!
+)
+qwen3_coder = ChatOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    model="qwen/qwen3-coder:free",
+    temperature=0.1,
+    max_retries=1
+)
+qwen_backup = ChatOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    model="qwen/qwen3-next-80b-a3b-instruct:free",
+    temperature=0.1,
+    max_retries=1
+)
+
+gpt_oss_backup = ChatOpenAI(
+    base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENROUTER_API_KEY"),
+    model="openai/gpt-oss-20b:free",
     temperature=0.1
 )
+
+# 2. Chain them into a resilient execution matrix
+# LangChain tries Llama -> if 429 occurs -> tries Qwen -> if 429 occurs -> tries GPT-OSS
+research_llm = llama_main.with_fallbacks([qwen_backup, qwen3_coder,gpt_oss_backup])
+
 tavily=TavilySearch(
     max_results=4,               
     search_depth="advanced", 
-    include_raw_content=True
+    include_raw_content=False
 )
 compressor_llm = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
@@ -36,9 +66,11 @@ writer_llm = ChatOpenAI(
     model="openai/gpt-oss-120b:free", 
     temperature=0.4 
 )
+writer_llm = writer_llm.with_fallbacks([qwen3_coder])
 class ArticleSection(TypedDict):
     section_title: str
     paragraph_text: str
+    image_subject: Optional[str]
     image_url: Optional[str] 
     alt_text: Optional[str]
 
@@ -55,52 +87,149 @@ class Research(TypedDict):
     Feedback:str
     article_sections: List[ArticleSection]
 
-async def deep_research(state:Research)->str:
+LENGTH_INSTRUCTIONS = {
+    "Short (500–700 words)": (
+        "Write a SHORT newsletter totalling 500–700 words across all sections combined. "
+        "Use 3–4 sections. Every sentence must earn its place — no padding, no recap."
+    ),
+    "Medium (900–1200 words)": (
+        "Write a MEDIUM newsletter totalling 900–1200 words across all sections combined. "
+        "Use 4–5 sections with solid paragraph depth per section."
+    ),
+    "Long (1500–2000 words)": (
+        "Write a LONG newsletter totalling 1500–2000 words across all sections combined. "
+        "Use 5–7 sections. Include at least one data grid or timeline table in Markdown."
+    ),
+    "Deep-dive (2500+ words)": (
+        "Write a DEEP-DIVE newsletter of 2500+ words across all sections combined. "
+        "Use 6–8 sections with exhaustive technical depth, multiple data tables, "
+        "and a Mermaid flowchart for any pipeline or architecture described."
+    ),
+}
+
+AUDIENCE_STYLE = {
+    "General Public": (
+        "Write for curious, intelligent non-specialists. "
+        "Define every technical term the first time it appears. "
+        "Use real-world analogies to ground abstract concepts. "
+        "Short sentences. Active voice. Never assume prior domain knowledge."
+    ),
+    "Tech Enthusiasts": (
+        "Assume the reader is comfortable with software architecture, APIs, and benchmarks. "
+        "Lead with technical mechanics before business context. "
+        "Include specific version numbers, model names, and performance figures where available. "
+        "Readers want depth — never simplify a concept that doesn't need simplifying."
+    ),
+    "Executives": (
+        "Open every section with the business implication, not the technical detail. "
+        "Frame data as decisions: what does this mean for budget, risk, or competitive position? "
+        "Use tight, scannable prose with clear headers. "
+        "One insight per paragraph. No jargon without a one-sentence plain-English translation."
+    ),
+    "Students": (
+        "Teach from the ground up. "
+        "Start each section with a clear learning objective stated as a question. "
+        "Progress from core concept → real-world example → broader implication. "
+        "Include a 'Key takeaway' sentence at the end of each section. "
+        "An encouraging, intellectually curious tone throughout."
+    ),
+    "Investors": (
+        "Lead with market size, TAM, growth rate, and competitive moat. "
+        "Frame every technical development as a financial signal. "
+        "Include valuation context, funding rounds, or revenue data where available. "
+        "Explicitly name risk factors alongside opportunities. "
+        "Think: what would a venture partner or fund manager need before writing a check?"
+    ),
+    "Researchers": (
+        "Write with academic precision. "
+        "Every empirical claim must reference its source citation inline. "
+        "Acknowledge methodological limitations and conflicting findings — do not smooth them over. "
+        "Avoid superlatives and marketing framing. "
+        "Prefer passive constructions where they are standard in the field."
+    ),
+}
+
+TONE_INSTRUCTIONS = {
+    "Professional & Objective": (
+        "Neutral, measured, authoritative. "
+        "Present multiple perspectives where they exist. "
+        "No editorialising. No exclamation marks. "
+        "The reader should trust this as a reliable briefing document."
+    ),
+    "Inspiring": (
+        "Forward-looking, energising, optimistic without being naive. "
+        "Frame every challenge as a solvable problem. "
+        "End each major section with a sentence that points toward possibility, not just current state. "
+        "Verbs should be active and strong."
+    ),
+    "Conversational": (
+        "Write like a brilliant friend who happens to be an expert. "
+        "Contractions are fine. Rhetorical questions welcome. "
+        "Vary sentence length deliberately — short punchy sentences after complex ones. "
+        "Never sound like a press release."
+    ),
+    "Analytical": (
+        "Logic-first. Every paragraph should follow a claim → evidence → implication structure. "
+        "Quantify wherever possible. "
+        "Flag uncertainty explicitly ('data is limited here', 'this is one interpretation'). "
+        "No flourish — precision over style."
+    ),
+    "Educational": (
+        "The primary goal is understanding, not just information transfer. "
+        "Use the 'explain then exemplify' pattern throughout. "
+        "Bold the single most important concept in each section. "
+        "Summaries and 'what this means in practice' callouts are expected."
+    ),
+    "Bold & Opinionated": (
+        "Take a clear, defensible position and hold it. "
+        "Do not hedge with 'some argue' or 'it could be said'. "
+        "Back opinions with cited evidence, but don't shy from the conclusion. "
+        "The reader should finish feeling they've heard a sharp point of view, not a survey."
+    ),
+}
+
+
+async def deep_research(state:Research)->dict:
     """
     Autonomous ReAct agent wrapper. It executes multiple search/critique loops internally and returns a clean markdown dossier/content string.
     """
-    researcher_prompt = SystemMessage(content="""You are an elite Autonomous Deep Research Agent operating with the cognitive depth, systematic thoroughness, and architectural precision of Gemini Deep Research and Perplexity Pro.
+    audience = state.get("target_audience", "General Public")
+    length = state.get("length", "Medium (900–1200 words)")
 
-    Your goal is to completely map out the user's topic by uncovering granular engineering metrics, verified timelines, raw technical data, and industry benchmarks. 
+    researcher_prompt =f"""You are an elite Autonomous Deep Research Agent. Your only job is to use the search tool repeatedly to build an exhaustive, cited dossier strictly tailored for an audience of: {audience}. You must NOT answer from memory.
 
-    To prevent shallow analysis and mimic Gemini's deep crawling capabilities, you MUST execute the following 4-Phase Operational Protocol:
+    MANDATORY EXECUTION PROTOCOL — follow these phases in order:
 
-    =========================================
-    PHASE 1: MULTI-ANGLE BREADTH EXPLORATION
-    =========================================
-    Do not just search for the literal user query. Break the topic down into its core architectural dimensions (e.g., market economic impact, underlying technical bottlenecks, competitive landscape, raw physics/science specs). Execute distinct, highly optimized search queries to establish a wide informational baseline across all these angles.
+    PHASE 1 — TARGETED BREADTH SEARCH (minimum 3 distinct queries)
+    Break the user's topic into its core dimensions based on what matters most to {audience}. 
+    - For Executives/Investors: Search for market economic impact, ROI, risks, and competitive landscape.
+    - For Tech Enthusiasts/Researchers: Search for underlying technical bottlenecks, raw physics/science specs, and benchmarks.
+    - For General/Students: Search for historical context, foundational mechanics, and real-world impact.
+    Run distinct, highly optimized search queries to establish a wide informational baseline across these targeted angles.
 
-    =========================================
-    PHASE 2: THE KNOWLEDGE-GAP CRITIQUE
-    =========================================
-    After every tool execution, review the retrieved raw text. You must explicitly identify what is MISSING. Ask yourself:
+    PHASE 2 — THE KNOWLEDGE-GAP CRITIQUE
+    After every tool execution, review the retrieved raw text. You must explicitly identify what is MISSING to write a comprehensive {length} article for this specific audience. Ask yourself:
     - "What specific metrics, percentages, or dollar amounts are absent?"
     - "Is this data up-to-date for the current year (2026), or am I looking at stale historical trends?"
-    - "Are there adjacent technologies, secondary players, or downstream dependencies I haven't searched for yet?"
-    If gaps exist, immediately formulate a hyper-targeted follow-up query specifically designed to hunt down those missing variables.
+    - "Have I fully satisfied the specific interests of the {audience}?"
+    If gaps exist, immediately formulate a hyper-targeted follow-up query.
 
-    =========================================
-    PHASE 3: VERIFICATION & DISCREPANCY RESOLUTION
-    =========================================
-    If you encounter conflicting viewpoints, varying statistics, or disputed timelines across different sources, do not guess. Treat this as an engineering bug. Execute a targeted verification search specifically querying the contradiction (e.g., "Source A claims X, Source B claims Y comparison") to determine the consensus or verify the premium source.
+    PHASE 3 — VERIFICATION & DISCREPANCY RESOLUTION
+    If you encounter conflicting viewpoints, varying statistics, or disputed timelines across different sources, do not guess. Treat this as an engineering bug. Execute a targeted verification search specifically querying the contradiction to determine the consensus.
 
-    =========================================
-    PHASE 4: EXHAUSTIVE DOSSIER SYNTHESIS
-    =========================================
-    Only stop searching when you have exhausted all knowledge gaps or completed at least 3 distinct iterative search cycles. Compile your findings into an enterprise-grade technical Research Dossier using the following structure:
-
-    1. EXECUTIVE SUMMARY: High-level overview of the topic's current state in 2026.
-    2. CORE ARCHITECTURAL & TECHNICAL BREAKDOWN: Deep-dive mechanics, physics, software architectures, or structural elements.
-    3. QUANTIFIABLE METRICS & DATA BENCHMARKS: An itemized, bulleted list of raw statistics, cost efficiencies, throughput speeds, percentages, and performance metrics.
-    4. TIMELINE & RECENT DEVELOPMENTS (UP TO 2026): A chronological breakdown of major milestones and recent real-world implementations.
-    5. SOURCE REPOSITORY: A numbered list of raw source URLs extracted from your tool outputs, mapped as citations [1], [2] next to facts in the text.
-
-    CRITICAL INSTRUCTION: Completely ignore vague marketing fluff, PR buzzwords, or introductory summaries. If a search result doesn't contain hard data or concrete facts, discard it and search again.""")
+    PHASE 4 — DYNAMIC DOSSIER SYNTHESIS
+    Only stop searching when you have exhausted all knowledge gaps or completed at least 3 distinct iterative search cycles. Compile your findings into an enterprise-grade Research Dossier.
+    
+    CRITICAL COMPILATION INSTRUCTIONS:
+    1. Do NOT use a generic or fixed template. Organize your headers and data logically based exclusively on what the {audience} needs to know.
+    2. Every single fact, metric, and claim MUST end with its source citation [URL] or [Source Name].
+    3. Include a "SOURCE REPOSITORY" section at the end: a numbered list of all URLs used, mapped as citations [1], [2] next to facts in the text.
+    4. Completely ignore vague marketing fluff or PR buzzwords. If it isn't a hard fact, discard it."""
 
     deep_research_agent = create_agent(
     model=research_llm,
     tools=[tavily],
-    state_modifier=researcher_prompt,
+    system_prompt=researcher_prompt.content,
     name="deep_research_subgraph"
 )
     response=deep_research_agent.invoke({
@@ -114,131 +243,134 @@ async def context_node(state:Research)->str:
     Ingests the massive raw content from deep_research node and uses Nemotron's 1-Million 
     token context window to distill it into a strict markdown outline.
     """
-    system_prompt = SystemMessage(content="""You are an elite, enterprise-grade Data Compression Engine operating with the structural rigidity, cross-modal retention, and architectural precision of an industrial knowledge-graph compiler.
+    audience = state.get("target_audience", "General Public")
+    tone     = state.get("tone", "Professional & Objective")
+    length   = state.get("length", "Medium (900–1200 words)")
 
-    Your sole objective is to ingest an exhaustive, messy, long-form research dossier and compress it into a highly dense, hyper-structured technical outline. You must optimize for 100% factual retention while eliminating 100% of narrative fluff.
+    system_prompt = """You are an elite Data Compression Engine. Your job is to distill a messy research dossier into a dense, structured outline that a downstream writer will use to draft a highly targeted newsletter.
 
-    To achieve maximum data density and leverage your massive context capacity, you MUST execute the following 4-Phase Operational Protocol:
+    CRITICAL DIRECTIVE:
+    You must dynamically structure this outline to serve the specific target audience. Do NOT use a generic template.
+    - If the audience is 'Executives' or 'Investors', prioritize and group ROI, market risks, financial metrics, and timelines.
+    - If the audience is 'Tech Enthusiasts' or 'Researchers', prioritize deep architecture, system bottlenecks, and benchmarks.
+    - If the audience is 'Students' or 'General Public', group the data chronologically or by core foundational concepts.
 
-    <operational_protocol>
-    PHASE 1: NARRATIVE LIQUIDATION & FILTERING
-    Analyze the raw dossier token-by-token. Instantly identify and permanently delete all introductory text, conversational filler, marketing transitions, adjectives, and hand-waving conclusions. Retain ONLY hard nouns, verifiable numbers, functional architectures, and exact technical variables.
+    STRICT RULES:
+    1. Zero Fluff: Delete all narrative filler, transitions, introductions, and conclusions. You are building a data skeleton.
+    2. Fact Preservation: Retain 100% of verifiable facts, numbers, dates, proper nouns, and URLs.
+    3. Citation Integrity: Keep every citation bracket (e.g., [1], [2]) exactly as found attached to its specific claim. Never merge citations.
+    4. Formatting: Use H3 (###) for major topic clusters, and standard bullet points for the exact extracted facts.
 
-    PHASE 2: CROSS-REFERENCE METRIC MAPPING
-    Extract every single quantifiable datapoint and group them into strict technical vectors. You must systematically isolate:
-    - System Architectures & Tech Stacks (frameworks, models, nodes, specs)
-    - Hard Financials & Dollar Amounts (costs, market capitalizations, ROI, budgets)
-    - Performance & Throughput Metrics (speeds, benchmarks, latency, energy densities, percentages)
-    - Chronological Timelines (verified milestones up to the current year, 2026)
+    VISUAL SUBJECTS REQUIREMENT (MANDATORY):
+    At the very end of your output, you MUST provide a visual mapping for the photo editor. 
+    For each major H3 topic cluster you created, write one line in this exact format:
+    VISUAL: [2–4 word literal, photographable subject, e.g., "server rack data centre", "surgeon operating room"]"""
 
-    PHASE 3: UNBROKEN CITATION COHERENCY
-    You are strictly forbidden from separating a fact from its source. Every single metric, architecture, or timeline event you extract MUST maintain its exact original source citation bracket (e.g., [1], [2], [3]) directly appended to the end of the bullet point. If a fact lacks an explicit citation from the dossier, group it under a global structural parent note.
+    human_prompt = """TARGET AUDIENCE: {target_audience}
+    TARGET TONE: {tone}
+    EXPECTED LENGTH: {length}
 
-    PHASE 4: HIGH-DENSITY MARKDOWN GENERATION
-    Output your final synthesis using a rigid hierarchical outline. Use Markdown nested bullet points and bold key variables. Adhere to this exact structure:
+    Compress the following research dossier accordingly:
 
-    ### 1. CORE TECHNICAL & ARCHITECTURAL SPECS
-    * **[Component/Stack Element]**: Detailed specification string or structural feature. [Citation]
-    * **[Bottleneck/Dependency]**: Core friction point or underlying engineering limitation. [Citation]
+    {raw_data}"""
 
-    ### 2. QUANTIFIABLE DATA & PERFORMANCE BENCHMARKS
-    * **[Metric Name]**: Exact raw statistics, percentage shifts, or numerical throughput values. [Citation]
-    * **[Financial/Cost Variable]**: Capital expenditures, processing costs, or asset evaluations. [Citation]
-
-    ### 3. VERIFIED TIMELINE & LOGISTICAL DEVELOPMENTS (UP TO 2026)
-    * **[YYYY-MM / Quarter]**: Specific real-world deployment milestone or physical implementation update. [Citation]
-    </operational_protocol>
-                                       
-    CRITICAL CONSTRAINT: Do not write an introduction. Do not write a summary or conclusion. Do not include any conversational transitions (e.g., "Here is the compressed data..."). Output starts directly with the first markdown header.""")
-    human_prompt="Here is the raw scraped dossier:\n\n{raw_data}"
-    prompt=ChatPromptTemplate.from_messages(
+    prompt=ChatPromptTemplate.from_messages([
         ("system",system_prompt),
         ("human",human_prompt)
-    )
+    ])
     flow=prompt|compressor_llm
-    response=await flow.ainvoke({"raw_data": state["content"]})
+    response=await flow.ainvoke({"target_audience": audience,"tone": tone,"length": length,"raw_data": state["content"]})
     return {"cleaned_content":response.content}
 
-async def gen_content(state:Research)->str:
-    previous_feedback=state.get("Feedback")
-    system_prompt="""You are the Chief Editor and Lead Writer for a premium publication. Your objective is to ingest a hyper-dense, cited data blueprint and synthesize it into a highly engaging, custom-tailored newsletter.
-
-    To achieve maximum performance, you MUST execute your response according to these Operational Vectors:
-
-    <dynamic_parameters>
-    - TARGET AUDIENCE: {target_audience}
-    - DESIRED TONE: {tone}
-    </dynamic_parameters>
-
-    <operational_vectors>
-    1. ADAPTIVE TONE & STYLE
-    - You must strictly calibrate your vocabulary, complexity, and narrative style to perfectly match the {target_audience}. 
-    - Ensure the writing embodies a {tone} tone throughout the entire piece.
-    - Never use generic AI transitions, introductory boilerplate, or conversational padding (e.g., "In this section...", "Let's dive into...").
-    - Bold critical variables and core concepts to make the document highly scannable.
-
-    2. LOGICAL FLOWCHART COMPILATION (MERMAID.JS)
-    - Carefully evaluate if the technical data contains a multi-step pipeline, user-flow, or system architecture.
-    - If it does, you MUST construct a highly precise, syntax-perfect Mermaid.js diagram to visually map out that architecture.
-    - Follow strict Mermaid syntax conventions. Ensure all nodes have explicit textual descriptors.
-
-    3. SACROSANCT DATA PROVENANCE (CITATIONS)
-    - You are strictly prohibited from dropping source citations. Every single bracketed citation (e.g., [1], [2]) present in the input blueprint must be cleanly migrated into your final synthesis.
-    - Append the citation bracket directly to the specific metric, feature, or claim it validates.
-
-    4. ADAPTIVE STRUCTURAL LAYOUT
-    Your output must maintain a logical flow suited for the {target_audience}, but MUST include:
-    - # [A Catchy, High-Impact Headline]
-    - ## [Context / The Big Picture]
-    - ## [Core Mechanics & Frameworks] (Include Mermaid diagram here if applicable)
-    - ## [Empirical Data & Milestones] (Include cleanly formatted Markdown data grids or itemized breakdowns of cited metrics)
-    
-    5. ZERO CONVERSATIONAL LEAKAGE
-    - Do not include greetings, sign-offs, or meta-commentary.
-    - Begin printing text immediately at the main H1 Markdown title (#) and stop instantly after the final paragraph.
-    </operational_vectors>
+async def gen_content(state: Research) -> dict:
     """
+    Write the final newsletter sections tailored to the user's explicit preferences.
+    """
+    previous_feedback = state.get("Feedback", "")
+    audience          = state.get("target_audience", "General Public")
+    tone              = state.get("tone", "Professional & Objective")
+    length            = state.get("length", "Medium (900–1200 words)")
+    includes          = state.get("include_options", ["mermaid", "images", "citations"])
+    audience_style     = AUDIENCE_STYLE.get(audience, AUDIENCE_STYLE["General Public"])
+    tone_instruction   = TONE_INSTRUCTIONS.get(tone, TONE_INSTRUCTIONS["Professional & Objective"])
+    length_instruction = LENGTH_INSTRUCTIONS.get(length, LENGTH_INSTRUCTIONS["Medium (900–1200 words)"])
+
     revision_directive = ""
-    if previous_feedback and previous_feedback != "Perfect":
+    if previous_feedback and previous_feedback not in ("Perfect", "Approved."):
         revision_directive = f"""
         **CRITICAL REVISION DIRECTIVE:**
         Your previous draft was REJECTED by the Managing Editor for the following reasons:
         <feedback>
         {previous_feedback}
         </feedback>
-        
         You MUST completely rewrite the draft, ensuring every single piece of feedback is addressed and fixed.
         """
 
-    human_prompt = """
-    <runtime_execution_manifest>
+    system_prompt = """You are the Chief Editor and Lead Writer for a premium publication. Your objective is to ingest a hyper-dense, cited data blueprint and synthesize it into a highly engaging, custom-tailored newsletter.
+
+    To achieve maximum performance, you MUST execute your response according to these Operational Vectors:
+
+    <operational_vectors>
+    1. ADAPTIVE TONE & STYLE
+    - AUDIENCE DIRECTIVE: {audience_style}
+    - TONE DIRECTIVE: {tone_instruction}
+    - Never use generic AI transitions, introductory boilerplate, or conversational padding (e.g., "In this section...", "Let's dive into...").
+    - Bold critical variables and core concepts to make the document highly scannable.
+
+    2. STRUCTURAL & LENGTH MANDATE
+    - {length_instruction}
+    - Do NOT use a rigid, generic template. Create logical, highly specific H2 headers based on the data and the audience's needs.
+
+    3. LOGICAL FLOWCHART COMPILATION (MERMAID.JS)
+    - Carefully evaluate if the technical data contains a multi-step pipeline, user-flow, or system architecture.
+    - If it does, you MUST construct a highly precise, syntax-perfect Mermaid.js diagram to visually map out that architecture.
+    - Follow strict Mermaid syntax conventions. Ensure all nodes have explicit textual descriptors.
+
+    4. SACROSANCT DATA PROVENANCE (CITATIONS)
+    - You are strictly prohibited from dropping source citations. Every single bracketed citation (e.g., [1], [2]) present in the input blueprint must be cleanly migrated into your final synthesis.
+    - Append the citation bracket directly to the specific metric, feature, or claim it validates.
+
+    5. VISUAL MAPPING (IMAGE SUBJECTS)
+    - For EVERY section you write, you must generate an `image_subject` field for the photo editor.
+    - This must be a 3–6 word description of a CONCRETE, PHOTOGRAPHABLE real-world scene representing the section (e.g., "surgeon operating room", "server rack lights", "wind turbines at sunset"). 
+    - BAD examples: "artificial intelligence", "future technology", "data" (These are too abstract).
+
+    6. ZERO CONVERSATIONAL LEAKAGE
+    - Do not include greetings, sign-offs, or meta-commentary.
+    </operational_vectors>"""
+
+    human_prompt = """<runtime_execution_manifest>
         [TARGET USER FOCUS AREA]:
         {user_query}
 
         [COMPRESSED DATA BLUEPRINT (CITED)]:
         {cleaned_content}
 
-        {revised_directive}
+        {revision_directive}
+        
         COMPILATION MANDATE:
-        Execute your system prompt protocols perfectly. Adapt the blueprint data into pristine paragraphs tailored to the specified audience and tone. Do not leak any system text or XML brackets into your final output.
-    </runtime_execution_manifest>
-    """
+        Execute your system prompt protocols perfectly. Adapt the blueprint data into pristine paragraphs tailored to the specified audience and tone.
+    </runtime_execution_manifest>"""
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
-        ("human", human_prompt)
+        ("human", human_prompt),
     ])
+    
+    # Ensure the LLM outputs to the Pydantic Schema so LangGraph can route it properly
     structured_writer = writer_llm.with_structured_output(DraftOutput)
     flow = prompt | structured_writer
-    response = await flow.ainvoke({
-        "target_audience": state.get("target_audience", "General Tech Enthusiasts"),
-        "tone": state.get("tone", "Informative and engaging"),
-        "user_query": state.get("user_query"),
-        "cleaned_content": state.get("cleaned_content"),
-        "revised_directive":revision_directive
-    })
     
-    return {"final_article": response.sections}
+    response = await flow.ainvoke({
+        "user_query":          state.get("revised_query", "User Topic"),
+        "cleaned_content":     state.get("cleaned_content", ""),
+        "audience_style":      audience_style,
+        "tone_instruction":    tone_instruction,
+        "length_instruction":  length_instruction,
+        "revision_directive":  revision_directive,
+    })
+
+    return {"article_sections": response.sections}
 
 subgraph=StateGraph(Research)
 subgraph.add_node("Deep_research",deep_research)
