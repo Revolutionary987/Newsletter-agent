@@ -1,7 +1,8 @@
 import os
 import asyncio
 from dotenv import load_dotenv
-from typing import TypedDict,List,Optional
+from typing import List,Optional
+from typing_extensions import TypedDict
 from langgraph.graph import StateGraph,START,END
 from langchain.messages import SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
