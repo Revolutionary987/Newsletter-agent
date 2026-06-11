@@ -1,8 +1,40 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ChevronDown } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import mermaid from 'mermaid';
+
+// --- 1. Initialize Mermaid globally ---
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'default', // You can change to 'dark' or 'neutral' if preferred
+  securityLevel: 'loose',
+});
+
+// --- 2. Isolated Component for rendering SVG flowcharts ---
+function MermaidDiagram({ chart }) {
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (containerRef.current && chart) {
+      // Generate a unique ID to prevent React DOM collisions
+      const id = `mermaid-${Math.random().toString(36).substring(2, 9)}`;
+      mermaid
+        .render(id, chart)
+        .then(({ svg }) => {
+          if (containerRef.current) {
+            containerRef.current.innerHTML = svg;
+          }
+        })
+        .catch((err) => console.error("Mermaid rendering error:", err));
+    }
+  }, [chart]);
+
+  return <div ref={containerRef} className="flex justify-center my-8 overflow-x-auto w-full" />;
+}
 
 export default function NewsletterGenerator() {
-  // --- 1. All State Variables (Fixed and complete) ---
+  // --- 3. All State Variables ---
   const [topic, setTopic] = useState('');
   const [audience, setAudience] = useState('');
   const [tone, setTone] = useState('');
@@ -14,7 +46,7 @@ export default function NewsletterGenerator() {
   const [error, setError] = useState(null);
   const [newsletterData, setNewsletterData] = useState(null);
 
-  // --- 2. The Submit Handler (Wired perfectly to your backend) ---
+  // --- 4. The Submit Handler ---
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsGenerating(true);
@@ -62,7 +94,7 @@ export default function NewsletterGenerator() {
     }
   };
 
-  // --- 3. The UI Rendering ---
+  // --- 5. The UI Rendering ---
   return (
     <div className="min-h-screen bg-[#F9F9F6] text-slate-900 font-sans p-6 md:p-12 flex flex-col items-center justify-center">
       <style dangerouslySetInnerHTML={{__html: `
@@ -159,6 +191,7 @@ export default function NewsletterGenerator() {
                   { id: 'short', label: 'Short', desc: '300-500 words' },
                   { id: 'medium', label: 'Medium', desc: '500-1000 words' },
                   { id: 'long', label: 'Long', desc: '1000-1500 words' },
+                  { id: 'deep-dive', label: 'Deep-dive', desc: '2500+ words' },
                 ].map((opt) => (
                   <button
                     key={opt.id}
@@ -217,7 +250,7 @@ export default function NewsletterGenerator() {
           </form>
         </div>
 
-        {/* --- 4. The Results Area --- */}
+        {/* --- 6. The Results Area --- */}
         
         {/* Error Display */}
         {error && (
@@ -231,7 +264,7 @@ export default function NewsletterGenerator() {
           <div className="mt-16 bg-white border border-slate-200 p-8 md:p-12 shadow-sm">
             {newsletterData.map((section, index) => (
               <div key={index} className="mb-12 last:mb-0">
-                <h2 className="text-3xl font-serif font-bold text-slate-900 mb-6">
+                <h2 className="text-3xl font-serif font-bold text-slate-900 mb-6 pb-2 border-b border-slate-100">
                   {section.section_title}
                 </h2>
                 
@@ -240,16 +273,52 @@ export default function NewsletterGenerator() {
                     <img 
                       src={section.image_url} 
                       alt={section.alt_text || section.section_title}
-                      className="w-full h-auto object-cover rounded-sm"
+                      className="w-full h-auto object-cover rounded-sm shadow-sm"
                     />
                     {section.alt_text && (
-                      <p className="text-xs text-slate-400 mt-2 italic">{section.alt_text}</p>
+                      <p className="text-xs text-slate-400 mt-3 text-center italic tracking-wide">
+                        {section.alt_text} 
+                        {section.image_source && ` (via ${section.image_source})`}
+                      </p>
                     )}
                   </div>
                 )}
                 
-                <div className="prose prose-slate max-w-none text-slate-700 leading-relaxed whitespace-pre-wrap">
-                  {section.paragraph_text}
+                {/* 7. Markdown Engine replacing whitespace-pre-wrap */}
+                <div className="prose prose-slate max-w-none text-slate-700 leading-relaxed">
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{
+                      // Intercept code blocks to check if they are Mermaid graphs
+                      code({ node, inline, className, children, ...props }) {
+                        const match = /language-(\w+)/.exec(className || '');
+                        if (!inline && match && match[1] === 'mermaid') {
+                          return <MermaidDiagram chart={String(children).replace(/\n$/, '')} />;
+                        }
+                        return (
+                          <code className={`bg-slate-100 px-1.5 py-0.5 rounded text-sm font-mono text-slate-800 ${className || ''}`} {...props}>
+                            {children}
+                          </code>
+                        );
+                      },
+                      // Style Markdown Tables properly
+                      table: ({node, ...props}) => <div className="overflow-x-auto my-8 border border-slate-200 rounded-sm"><table className="min-w-full divide-y divide-slate-200" {...props} /></div>,
+                      thead: ({node, ...props}) => <thead className="bg-slate-50" {...props} />,
+                      th: ({node, ...props}) => <th className="px-4 py-3 text-left text-xs font-semibold text-slate-900 uppercase tracking-wider" {...props} />,
+                      td: ({node, ...props}) => <td className="whitespace-normal px-4 py-4 text-sm text-slate-600 border-t border-slate-200" {...props} />,
+                      
+                      // Style citations and links
+                      a: ({node, ...props}) => <a className="text-blue-600 hover:text-blue-800 underline decoration-blue-200 underline-offset-2" {...props} />,
+                      
+                      // Style standard headers inside the text block
+                      h3: ({node, ...props}) => <h3 className="text-xl font-bold text-slate-900 mt-8 mb-4" {...props} />,
+                      h4: ({node, ...props}) => <h4 className="text-lg font-semibold text-slate-900 mt-6 mb-3" {...props} />,
+                      ul: ({node, ...props}) => <ul className="list-disc pl-5 space-y-2 my-4 marker:text-slate-400" {...props} />,
+                      p: ({node, ...props}) => <p className="my-4" {...props} />,
+                    }}
+                  >
+                    {section.paragraph_text}
+                  </ReactMarkdown>
                 </div>
               </div>
             ))}
