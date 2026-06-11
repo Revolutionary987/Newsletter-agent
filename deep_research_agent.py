@@ -6,7 +6,7 @@ from langgraph.graph import StateGraph,START,END
 from langchain.messages import SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
-from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain_tavily import TavilySearch
 from langchain.agents import create_agent
 from pydantic import BaseModel
 
@@ -18,7 +18,7 @@ research_llm = ChatOpenAI(
     model="llama-3.3-70b-versatile",
     temperature=0.1
 )
-tavily=TavilySearchResults(
+tavily=TavilySearch(
     max_results=4,               
     search_depth="advanced", 
     include_raw_content=True
