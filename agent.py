@@ -22,17 +22,18 @@ from huggingface_hub import AsyncInferenceClient
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from langchain_openai import ChatOpenAI
-# Connect to the free serverless API
+from tavily import TavilyClient
+from langchain_community.tools.tavily_search import TavilySearchResults
+from deep_research_agent import workflow
+
 hf_endpoint = HuggingFaceEndpoint(
     repo_id="google/gemma-4-26B-A4B-it",
     task="image-text-to-text",
     huggingfacehub_api_token=os.getenv("HF_TOKEN")
 )
+llm=ChatOpenAI(base_url="https://openrouter.ai/api/v1",api_key=os.getenv("OPENROUTER_API_KEY"),model="llama-3.3-70b-versatile",temperature=0.1)
+
 vision_llm = ChatHuggingFace(llm=hf_endpoint)
-# llm=ChatGroq(model="llama-3.3-70b-versatile", temperature=0,api_key=os.getenv("GROQ_API_KEY"))
-llm = ChatOpenAI(base_url="https://openrouter.ai/api/v1",api_key=os.getenv("OPENROUTER_API_KEY"),model="nvidia/nemotron-3-ultra-550b-a55b:free",temperature=0.3, max_retries=5)
-# vision_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash",temperature=0,api_key=os.getenv("GOOGLE_API_KEY"))
-vision_llm=ChatHuggingFace(llm=hf_endpoint)
 
 class ArticleSection(TypedDict):
     section_title: str
@@ -44,10 +45,11 @@ class BaseState(TypedDict):
     User_query:str
     revised_query:str
     length:str
-    Outline:str
+    final_article:str
     Grading:bool
     Feedback:str
     key_points: str
+    cleaned_content:str
     images:list[dict]
     alt_text: str
     article_sections: List[ArticleSection]
@@ -55,20 +57,6 @@ class BaseState(TypedDict):
     Text_Feedback: str
     Image_Grading: bool
     Image_Feedback: str
-@tool
-def web_search(query:str)->str:
-    """Searches the web using DuckDuckGo to return relevant factual summaries."""
-    try:
-        with DDGS() as ddgs:
-            results=[result for result in ddgs.text(query,max_results=4)]
-            if not results:
-                raise f"No results found for query: {query}"
-            formatted_results = []
-            for r in results:
-                formatted_results.append(f"Title: {r['title']}\nURL: {r['href']}\nSnippet: {r['body']}\n---")
-            return "\n".join(formatted_results)
-    except Exception as e:
-        return f"Search failed due to an error: {str(e)}"
     
 async def query_rewrite(state:BaseState):
     user_query=state["User_query"]
@@ -115,155 +103,17 @@ async def query_rewrite(state:BaseState):
     )
     return {"revised_query":response.content}
 
-async def research(state:BaseState)->str:
-    topic=state.get("revised_query")
-    target_audience=state.get("audience", "General Public")
-    tone=state.get("tone", "Professional")
-    length=state.get("length","medium")
-
-    system_prompt="""
-    You are the Lead Research Synthesizer for a professional, dynamic newsletter. Your objective is to extract accurate, up-to-date information on any user-provided subject and structure it into a "narrative blueprint" so the Editorial Node can craft an engaging, magazine-style article.
-
-    When given a topic or query by the user, you must execute the following steps:
-    1. Deconstruct the topic into targeted search queries to capture fundamental concepts, recent milestones, and expert perspectives.
-    2. Filter the raw search data to remove generic marketing filler, irrelevant tangents, and duplicate news.
-    3. Synthesize your findings into the following strict blueprint structure. 
-
-    Your output MUST be formatted exactly as follows:
-
-    - **The Hook / The Core Mystery:** What is the fundamental, fascinating question at the heart of this topic? (e.g., "What is driving the sudden leap in autonomous agents?", "How do decentralized energy grids actually work?", or "Why is the global bond market shifting so rapidly?")
-    - **The Core Mechanics (Step-by-Step):** A simplified, highly accurate breakdown of the logic, science, or systems behind the topic. Break complex ideas into digestible, logical stages or components.
-    - **Latest Milestones & Updates:** What are the most recent tests, discoveries, market shifts, or developments occurring right now? Name specific entities, companies, frameworks, or global events.
-    - **The Big Picture / Broader Impact:** How will this topic alter the future of its respective industry, human behavior, or the global landscape?
-    - **Verified Sources:** Clean URLs or article titles from your search execution.
-
-    Do NOT write the final article or use poetic language. Your job is to provide the structured, factual skeleton that the Editor will use to write the final piece.
-    """
-    Human_prompt="""
-        **INITIALIZATION COMMAND:**
-        Initiate the research phase for the following newsletter parameters:
-        
-        - **Target Topic:** {topic}
-        - **Target Audience:** {target_audience}
-        - **Desired Tone of Final Article:** {tone}
-        - **Desired Length of the content:**{length}
-        
-        **EXECUTION DIRECTIVE:**
-        If you need up-to-date facts and for topics you aren't confident or may require external innformation , use your search tools. If you have enough data, output ONLY the finalized "Narrative Blueprint".
-        
-        Do not output any conversational filler. Output ONLY the finalized "Narrative Blueprint" exactly as defined in your system instructions.
-
-"""
-    prompt=ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", Human_prompt)
-    ])
-    # format_messages creates a list by default when called
-    messages=prompt.format_messages(
-        topic=topic,
-        target_audience=target_audience,
-        tone=tone,
-        length=length
-    )
-    llm_with_tools = llm.bind_tools([web_search])
-    response=await llm_with_tools.ainvoke(messages)
-    if response.tool_calls:
-        messages.append(response)
-        for tool_call in response.tool_calls:
-            if tool_call["name"] == "web_search":
-                tool_output = web_search.invoke(tool_call["args"]) 
-                    
-                    # Package the result back to the LLM
-                tool_message = ToolMessage(
-                    content=str(tool_output),
-                    tool_call_id=tool_call["id"]
-                )
-                messages.append(tool_message)
-        final_response = await llm_with_tools.ainvoke(messages)
-        return {"Outline": final_response.content}
-       
-    else:
-        # If the LLM already knew the answer, just return it
-        return {"Outline":response.content}
-    
 class DraftOutput(BaseModel):
     sections:List[ArticleSection]
-
-async def gen_draft(state:BaseState)->str:
-
-    outline=state["Outline"]
-    target_audience=state.get("audience", "General Public")
-    tone=state.get("tone", "Professional")
-    previous_feedback = state.get("Feedback", "")
-    key_points = state.get("key_points", "None specified by user.")
-
-    system_prompt="""
-    You are the Senior Editor and Lead Staff Writer for a premium, magazine-style newsletter. Your objective is to take the factual "Narrative Blueprint" provided by the Research team and transform it into a captivating, highly readable article.
-
-    You will receive:
-    1. The target audience and desired tone.
-    2. The structured "Narrative Blueprint" containing the facts, core mechanics, and latest updates.
-
-    Your writing MUST adhere to the following editorial standards:
-    - **No Hallucinations:** You must base your article STRICTLY on the facts provided in the blueprint. Do not invent new milestones, statistics, or events.
-    - **Engaging Flow:** Seamlessly transition between the "Hook", the "Core Mechanics", and the "Broader Impact". Do not just list facts; tell the story of the technology, concept, or event.
-    - **Formatting:** Use rich Markdown formatting. Include a compelling main Headline (`#`), subheadings for distinct sections (`##`), and bullet points where appropriate to break up dense technical mechanics.
-    - **Mandatory Inclusions:** You MUST weave the following specific points into the narrative: {key_points}
-    - **Tone Alignment:** Strictly match the requested tone and tailor the vocabulary to the target audience.
-
-    Output the final article in the following structure:
-    - [Catchy Main Headline]
-    - [Introduction / The Hook]
-    - [Body Paragraphs / Subheadings detailing mechanics and updates]
-    - [Conclusion / The Big Picture]
-    - [A sign-off line: "- Written by [Generate a realistic journalist name]"]
-
-    Do not output any introductory or concluding conversational text (e.g., "Here is your article:"). Output ONLY the final, polished newsletter text.
-
-    """
-    revision_directive = ""
-    if previous_feedback and previous_feedback != "Perfect":
-        revision_directive = f"""
-        **CRITICAL REVISION DIRECTIVE:**
-        Your previous draft was REJECTED by the Managing Editor for the following reasons:
-        <feedback>
-        {previous_feedback}
-        </feedback>
-        
-        You MUST completely rewrite the draft, ensuring every single piece of feedback is addressed and fixed.
-        """
-    human_prompt="""
-    **EDITORIAL TASK INITIATION**
-    Please execute your drafting duties for the following assignment. 
-
-    **PARAMETER CONSTRAINTS:**
-    - Target Audience: {target_audience}
-    - Required Tone: {tone}
-    {revision_directive}
-    **SOURCE MATERIAL (NARRATIVE BLUEPRINT):**
-    Below is the raw factual data compiled by the Research Team. You must use this data to write the final article according to your system instructions. Do not add outside facts.
-
-    <blueprint>
-    {outline}
-    </blueprint>
-    """
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", human_prompt)
-    ])
-    structured_llm=llm.with_structured_output(DraftOutput)
-    flow=prompt|structured_llm
-    response=await flow.ainvoke({"outline": outline,"target_audience": target_audience,"tone": tone,"revision_directive": revision_directive,"key_points": key_points})
-    return {"article_sections":response.sections}
 
 class Gradee(BaseModel):
     is_pass: Annotated[bool,Field(description="Set to True if the draft is 100% factual and matches the formatting rules. Set to False if there are hallucinations or poor formatting.")]
     feedback: Annotated[str,Field(description="If is_pass is True, write 'Approved'. If False, provide a strict, bulleted list of specific corrections the writer must make.")]
     
 async def check_hal(state:BaseState):
-    outline=state["Outline"]
+    cleaned_content=state["cleaned_content"]
     sections = state["article_sections"]
-    # 2. Stitch the sections together into a single text block for the grader
+    final_article=state["final_article"]
     compiled_draft = "\n\n".join([f"## {s['section_title']}\n{s['paragraph_text']}" for s in sections])
     system_prompt="""
     You are the Managing Editor and Chief Fact-Checker for a premium newsletter. Your objective is to review the writer's Draft against the original Research Blueprint to ensure strict quality and factual accuracy.
@@ -284,12 +134,12 @@ async def check_hal(state:BaseState):
 
     **THE FACTUAL BLUEPRINT (Source of Truth):**
     <blueprint>
-    {outline}
+    {cleaned_content}
     </blueprint>
 
     **THE GENERATED DRAFT (Text to Evaluate):**
     <draft>
-    {draft}
+    {final_article}
     </draft>
 
     **EVALUATION DIRECTIVE:**
@@ -303,7 +153,7 @@ async def check_hal(state:BaseState):
     
     structured_llm=llm.with_structured_output(Gradee)
     flow=prompt|structured_llm
-    response=await flow.ainvoke({"outline": outline,"draft":compiled_draft})
+    response=await flow.ainvoke({"cleaned_content":cleaned_content,"final_article":compiled_draft})
     return {
         "Grading": response.is_pass, 
         "Feedback": response.feedback
@@ -370,11 +220,11 @@ async def gen_image(state: BaseState):
             updated_sections.append(section)
     return {"article_sections": updated_sections}
    
-async def check_grade(state:BaseState)->Literal["Image_gen","Creating_draft"]:
+async def check_grade(state:BaseState)->Literal["Image_gen","Subgraph"]:
     if state["Grading"]==True:
         return "Image_gen"
     else:
-        return "Creating_draft"
+        return "Subgraph"
 class FinalPublicationGrade(BaseModel):
     text_approved: bool = Field(description="True if text is factual and formatted correctly.")
     text_feedback: str = Field(description="Feedback for the writer. Write 'Perfect' if approved.")
@@ -440,26 +290,24 @@ async def final_checking(state:BaseState):
             if attempt == max_retries - 1:
                 raise ValueError("The Editor Agent failed to format its grading response. Aborting publication for safety.")
 
-async def check(state:BaseState)->Literal["Creating_draft","Image_gen","__end__"]:
+async def check(state:BaseState)->Literal["Subgraph","Image_gen","__end__"]:
     if state["Text_Grading"]==False:
-        return "Creating_draft"
+        return "Subgraph"
     elif state["Image_Grading"]==False:
         return "Image_gen"
     else:
         return END
     
 graph=StateGraph(BaseState)
-graph.add_node("Research",research)
 graph.add_node("Rewrite_query",query_rewrite)
-graph.add_node("Creating_draft",gen_draft)
+graph.add_node("Subgraph",workflow)
 graph.add_node("Hallucination_check",check_hal)
 graph.add_node("Image_gen",gen_image)
 graph.add_node("Final_check",final_checking)
 
 graph.add_edge(START,"Rewrite_query")
-graph.add_edge("Rewrite_query","Research")
-graph.add_edge("Research","Creating_draft")
-graph.add_edge("Creating_draft","Hallucination_check")
+graph.add_edge("Rewrite_query","Subgraph")
+graph.add_edge("Subgraph","Hallucination_check")
 graph.add_conditional_edges("Hallucination_check",check_grade)
 graph.add_edge("Image_gen","Final_check")
 graph.add_conditional_edges("Final_check",check)

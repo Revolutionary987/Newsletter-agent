@@ -1,14 +1,14 @@
 import os
 import asyncio
 from dotenv import load_dotenv
-from typing import TypedDict,List
+from typing import TypedDict,List,Optional
 from langgraph.graph import StateGraph,START,END
 from langchain.messages import SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain.agents import create_agent
-
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -35,13 +35,24 @@ writer_llm = ChatOpenAI(
     model="openai/gpt-oss-120b:free", 
     temperature=0.4 
 )
+class ArticleSection(TypedDict):
+    section_title: str
+    paragraph_text: str
+    image_url: Optional[str] 
+    alt_text: Optional[str]
+
+class DraftOutput(BaseModel):
+    sections: List[ArticleSection]
 
 class Research(TypedDict):
     content:str
-    user_query:str
+    revised_query:str
     target_audience: str
     tone: str
     cleaned_content:str
+    final_article:str
+    Feedback:str
+    article_sections: List[ArticleSection]
 
 async def deep_research(state:Research)->str:
     """
@@ -92,7 +103,7 @@ async def deep_research(state:Research)->str:
     name="deep_research_subgraph"
 )
     response=deep_research_agent.invoke({
-        "messages":[{"role":"user","content":state["user_query"]}]
+        "messages":[{"role":"user","content":state["revised_query"]}]
     })
     compiled_content = response["messages"][-1].content
     return {"content":compiled_content}
@@ -146,7 +157,9 @@ async def context_node(state:Research)->str:
     flow=prompt|compressor_llm
     response=await flow.ainvoke({"raw_data": state["content"]})
     return {"cleaned_content":response.content}
+
 async def gen_content(state:Research)->str:
+    previous_feedback=state.get("Feedback")
     system_prompt="""You are the Chief Editor and Lead Writer for a premium publication. Your objective is to ingest a hyper-dense, cited data blueprint and synthesize it into a highly engaging, custom-tailored newsletter.
 
     To achieve maximum performance, you MUST execute your response according to these Operational Vectors:
@@ -184,6 +197,17 @@ async def gen_content(state:Research)->str:
     - Begin printing text immediately at the main H1 Markdown title (#) and stop instantly after the final paragraph.
     </operational_vectors>
     """
+    revision_directive = ""
+    if previous_feedback and previous_feedback != "Perfect":
+        revision_directive = f"""
+        **CRITICAL REVISION DIRECTIVE:**
+        Your previous draft was REJECTED by the Managing Editor for the following reasons:
+        <feedback>
+        {previous_feedback}
+        </feedback>
+        
+        You MUST completely rewrite the draft, ensuring every single piece of feedback is addressed and fixed.
+        """
 
     human_prompt = """
     <runtime_execution_manifest>
@@ -191,8 +215,9 @@ async def gen_content(state:Research)->str:
         {user_query}
 
         [COMPRESSED DATA BLUEPRINT (CITED)]:
-        {blueprint}
+        {cleaned_content}
 
+        {revised_directive}
         COMPILATION MANDATE:
         Execute your system prompt protocols perfectly. Adapt the blueprint data into pristine paragraphs tailored to the specified audience and tone. Do not leak any system text or XML brackets into your final output.
     </runtime_execution_manifest>
@@ -202,15 +227,17 @@ async def gen_content(state:Research)->str:
         ("system", system_prompt),
         ("human", human_prompt)
     ])
-    flow = prompt | writer_llm 
+    structured_writer = writer_llm.with_structured_output(DraftOutput)
+    flow = prompt | structured_writer
     response = await flow.ainvoke({
         "target_audience": state.get("target_audience", "General Tech Enthusiasts"),
         "tone": state.get("tone", "Informative and engaging"),
         "user_query": state.get("user_query"),
-        "blueprint": state.get("cleaned_content")
+        "cleaned_content": state.get("cleaned_content"),
+        "revised_directive":revision_directive
     })
     
-    return {"final_article": response.content}
+    return {"final_article": response.sections}
 
 subgraph=StateGraph(Research)
 subgraph.add_node("Deep_research",deep_research)
@@ -221,3 +248,5 @@ subgraph.add_edge(START,"Deep_research")
 subgraph.add_edge("Deep_research","Compressor")
 subgraph.add_edge("Compressor","Content_generation")
 subgraph.add_edge("Content_generation",END)
+
+workflow=subgraph.compile()
