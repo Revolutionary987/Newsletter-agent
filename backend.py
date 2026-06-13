@@ -1,4 +1,6 @@
-import os 
+import os
+import json
+from fastapi.responses import StreamingResponse
 from fastapi import FastAPI,HTTPException
 from pydantic import BaseModel
 from  agent import workflow
@@ -22,7 +24,7 @@ class initial(BaseModel):
     tone: Optional[str] = "Professional"
     length:Literal["short", "medium", "long","deep-dive"]
     key_points:Optional[str]=None
-    \
+
 LENGTH_MAP = {
     "short": "Short (500–700 words)",
     "medium": "Medium (900–1200 words)",
@@ -31,23 +33,32 @@ LENGTH_MAP = {
 }
 
 @app.post("/api/v1/generate")
-async def agent_call(request:initial):
-    try:
-        initial_state={
+async def agent_call(request: initial):
+    async def event_generator():
+        try:
+            initial_state={
             "User_query": request.topic,
-            "audience": request.audience,
+            "target_audience": request.audience,
             "tone": request.tone,
             "length": LENGTH_MAP.get(request.length, "Medium (900–1200 words)"),
             "key_points":request.key_points
         }
-        final_state=await workflow.ainvoke(initial_state)
-        sections=final_state.get("article_sections",[])
-        if not sections:
-            raise HTTPException(status_code=500, detail="Agent failed to generate sections.")
-        return {
-            "status": "success",
-            "data": sections
-        }
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500,detail=str(e))
+            # stream mode = updates means it returns a dictionary but for messages it returns a tuple
+            # Add this temporarily to server.py to debug
+            async for chunk in workflow.astream(initial_state, stream_mode="updates"):
+                print("RAW CHUNK:", chunk)  # ← add this
+                for node_name, node_output in chunk.items():
+                    print(f"  NODE: {node_name}, KEYS: {list(node_output.keys())}")  # ← and this
+                    if node_name == "Image_gen":
+                        sections = node_output.get("article_sections", [])
+                        print(f"  SECTIONS COUNT: {len(sections)}")  # ← and this
+                        yield f"data: {json.dumps({'status': 'complete', 'sections': sections})}\n\n"
+                    else:
+                        yield f"data: {json.dumps({'status': 'running', 'node': node_name})}\n\n"
+        except Exception as e:
+            traceback.print_exc()
+            # yield returns or streams the value one by one but return sends the value all at once
+            # refer return and yield diff 
+            yield f"data: {json.dumps({'status': 'error', 'detail': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
