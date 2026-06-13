@@ -46,7 +46,7 @@ export default function NewsletterGenerator() {
   const [error, setError] = useState(null);
   const [newsletterData, setNewsletterData] = useState(null);
 
-  // --- 4. The Submit Handler ---
+  // --- 4. The Submit Handler (UPDATED WITH STREAM PARSING) ---
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsGenerating(true);
@@ -57,7 +57,7 @@ export default function NewsletterGenerator() {
     let enrichedTopic = topic;
     if (instructions) enrichedTopic += `. Extra instructions: ${instructions}.`;
 
-    // Point to your live Hugging Face backend
+    // Point to your live backend
     const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://aicoder35235-newsletter.hf.space';
 
     try {
@@ -79,13 +79,52 @@ export default function NewsletterGenerator() {
         throw new Error(`Server responded with status ${response.status}`);
       }
 
-      const result = await response.json();
-      
-      if (result.status === 'success' && result.data) {
-        setNewsletterData(result.data);
-      } else {
-        throw new Error('Invalid data format received from the server.');
+      // --- SSE STREAMING FIX ---
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let hasReceivedData = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        // Decode the incoming byte chunk into a string
+        const chunk = decoder.decode(value, { stream: true });
+        
+        // Split the chunk by newlines because SSE can send multiple lines at once
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          // Only parse lines that contain actual data
+          if (line.trim() !== "" && line.startsWith("data: ")) {
+            try {
+              // Strip the "data: " prefix off the string
+              const jsonStr = line.replace(/^data:\s*/, '');
+              const parsedData = JSON.parse(jsonStr);
+              
+              // Check if the backend sent the final success payload
+              if (parsedData.status === 'success' && parsedData.data) {
+                setNewsletterData(parsedData.data);
+                hasReceivedData = true;
+              } 
+              // Alternative fallback in case your backend sends the raw state
+              else if (parsedData.article_sections) {
+                setNewsletterData(parsedData.article_sections);
+                hasReceivedData = true;
+              }
+
+            } catch (err) {
+              console.error("Stream parsing skipped a broken chunk:", line);
+              // We don't throw an error here so the stream can keep reading the next chunks
+            }
+          }
+        }
       }
+
+      if (!hasReceivedData) {
+         throw new Error("Stream completed but no valid newsletter data was found.");
+      }
+
     } catch (err) {
       console.error("Generation error:", err);
       setError(err.message || "Failed to connect to the AI Engine. Please try again.");
@@ -284,12 +323,11 @@ export default function NewsletterGenerator() {
                   </div>
                 )}
                 
-                {/* 7. Markdown Engine replacing whitespace-pre-wrap */}
+                {/* 7. Markdown Engine */}
                 <div className="prose prose-slate max-w-none text-slate-700 leading-relaxed">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
                     components={{
-                      // Intercept code blocks to check if they are Mermaid graphs
                       code({ node, inline, className, children, ...props }) {
                         const match = /language-(\w+)/.exec(className || '');
                         if (!inline && match && match[1] === 'mermaid') {
@@ -301,16 +339,11 @@ export default function NewsletterGenerator() {
                           </code>
                         );
                       },
-                      // Style Markdown Tables properly
                       table: ({node, ...props}) => <div className="overflow-x-auto my-8 border border-slate-200 rounded-sm"><table className="min-w-full divide-y divide-slate-200" {...props} /></div>,
                       thead: ({node, ...props}) => <thead className="bg-slate-50" {...props} />,
                       th: ({node, ...props}) => <th className="px-4 py-3 text-left text-xs font-semibold text-slate-900 uppercase tracking-wider" {...props} />,
                       td: ({node, ...props}) => <td className="whitespace-normal px-4 py-4 text-sm text-slate-600 border-t border-slate-200" {...props} />,
-                      
-                      // Style citations and links
                       a: ({node, ...props}) => <a className="text-blue-600 hover:text-blue-800 underline decoration-blue-200 underline-offset-2" {...props} />,
-                      
-                      // Style standard headers inside the text block
                       h3: ({node, ...props}) => <h3 className="text-xl font-bold text-slate-900 mt-8 mb-4" {...props} />,
                       h4: ({node, ...props}) => <h4 className="text-lg font-semibold text-slate-900 mt-6 mb-3" {...props} />,
                       ul: ({node, ...props}) => <ul className="list-disc pl-5 space-y-2 my-4 marker:text-slate-400" {...props} />,
