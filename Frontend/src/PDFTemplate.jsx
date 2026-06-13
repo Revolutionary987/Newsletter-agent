@@ -51,7 +51,7 @@ export default function PDFTemplate({ newsletterData, topic }) {
       {/* 📚 THE EDITORIAL INTERACTIVE LAYER */}
       <div className="space-y-16">
         {newsletterData.map((section, index) => {
-          // Alternates media alignments dynamically to match corporate editorial style guide standards
+          // Alternates media alignments dynamically
           const isEven = index % 2 === 0;
 
           return (
@@ -70,11 +70,11 @@ export default function PDFTemplate({ newsletterData, topic }) {
               {/* DYNAMIC STRUCTURAL COLUMN MATRIX */}
               {section.image_url ? (
                 <div className="flex flex-col gap-6">
-                  {/* Asymmetric Alternating Media Split */}
-                  <div className={`flex flex-col md:flex-row gap-8 items-start ${isEven ? '' : 'md:flex-row-reverse'}`}>
+                  {/* HARDCODED side-by-side flex row (no md: prefix) to guarantee PDF rendering */}
+                  <div className={`flex flex-row gap-8 items-start ${isEven ? '' : 'flex-row-reverse'}`}>
                     
-                    {/* Core Prose Node */}
-                    <div className="w-full md:w-3/5 text-[13px] leading-relaxed text-[#475569] text-justify">
+                    {/* Core Prose Node - Hardcoded to 60% width */}
+                    <div className="w-3/5 text-[13px] leading-relaxed text-[#475569] text-justify">
                       <ReactMarkdown 
                         remarkPlugins={[remarkGfm]}
                         components={markdownComponents}
@@ -83,8 +83,8 @@ export default function PDFTemplate({ newsletterData, topic }) {
                       </ReactMarkdown>
                     </div>
 
-                    {/* Highly Polished Visual Frame Component WITH STRICT HEIGHT FIX */}
-                    <div className="w-full md:w-2/5 shrink-0 bg-[#f8fafc] p-2.5 border border-[#e2e8f0] rounded-sm shadow-sm">
+                    {/* Highly Polished Visual Frame Component - Hardcoded to 40% width */}
+                    <div className="w-2/5 shrink-0 bg-[#f8fafc] p-2.5 border border-[#e2e8f0] rounded-sm shadow-sm">
                       <img
                         src={section.image_url}
                         alt={section.alt_text || section.section_title}
@@ -126,12 +126,11 @@ export default function PDFTemplate({ newsletterData, topic }) {
 
 // ---------------------------------------------------------------------------
 // 🎨 GLOBAL PREMIUM INLINE MARKDOWN INTERCEPT RENDERING COMPONENT REGISTRY
-// INCLUDES STRICT BOUNDARY WRAPPING TO PREVENT PDF DISTORTION
 // ---------------------------------------------------------------------------
 const markdownComponents = {
-  // SAAS BENTO GRID LIST CONVERSION
+  // SAAS BENTO GRID LIST CONVERSION (Hardcoded to 2 columns)
   ul: ({ node, ...props }) => (
-    <ul className="grid grid-cols-1 md:grid-cols-2 gap-3 my-6 p-0 list-none" {...props} />
+    <ul className="grid grid-cols-2 gap-3 my-6 p-0 list-none" {...props} />
   ),
   li: ({ node, ...props }) => (
     <li className="bg-[#f8fafc] border border-[#e2e8f0] p-4 rounded-sm text-[12px] font-medium text-[#334155] leading-normal relative pl-9 shadow-sm break-words" {...props}>
@@ -139,7 +138,6 @@ const markdownComponents = {
       {props.children}
     </li>
   ),
-  // PREVENT CODE BLOCKS FROM BREAKING THE PAGE WIDTH
   pre: ({ node, ...props }) => (
     <pre className="bg-[#f1f5f9] p-3 rounded-sm my-4 overflow-hidden whitespace-pre-wrap break-words text-[10px] text-[#334155] border border-[#e2e8f0]" {...props} />
   ),
@@ -148,7 +146,6 @@ const markdownComponents = {
     <code className="bg-[#f1f5f9] px-1 py-0.5 rounded-sm text-[#2563eb] text-[11px] break-words" {...props} /> :
     <code className="break-words" {...props} />
   ),
-  // HIGH-END STRIPED FINANCIAL DATA GRID CONVERSIONS WITH STRICT SIZING
   table: ({ node, ...props }) => (
     <div className="w-full my-8 border border-[#e2e8f0] rounded-sm overflow-hidden shadow-sm">
       <table className="min-w-full text-[11px] text-left border-collapse table-fixed" {...props} />
@@ -166,7 +163,6 @@ const markdownComponents = {
   tr: ({ node, ...props }) => (
     <tr className="hover:bg-[#f8fafc]/50 transition-colors odd:bg-white even:bg-[#f8fafc]/30" {...props} />
   ),
-  // CLEAN INTERNAL TYPOGRAPHY PRIMITIVES
   h3: ({ node, ...props }) => (
     <h3 className="text-md font-bold text-[#0f172a] mt-6 mb-2 tracking-tight flex items-center gap-2 break-words" {...props} />
   ),
