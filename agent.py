@@ -16,29 +16,35 @@ from langchain_core.messages import HumanMessage,SystemMessage,ToolMessage
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
-from duckduckgo_search import DDGS
 from pydantic import BaseModel,Field
 from huggingface_hub import AsyncInferenceClient
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from langchain_openai import ChatOpenAI
-from tavily import TavilyClient
-from langchain_community.tools.tavily_search import TavilySearchResults
 from deep_research_agent import workflow
 
-hf_endpoint = HuggingFaceEndpoint(
-    repo_id="google/gemma-4-26B-A4B-it",
-    task="image-text-to-text",
-    huggingfacehub_api_token=os.getenv("HF_TOKEN")
-)
-llm=ChatOpenAI(base_url="https://openrouter.ai/api/v1",api_key=os.getenv("OPENROUTER_API_KEY"),model="meta-llama/llama-3.3-70b-instruct:free",temperature=0.1,extra_body={
-        "models": [
-            "qwen/qwen3-next-80b-a3b-instruct:free",
-            "openai/gpt-oss-20b:free",
-        ]
-    })
+# hf_endpoint = HuggingFaceEndpoint(
+#     repo_id="google/gemma-4-26B-A4B-it",
+#     task="image-text-to-text",
+#     huggingfacehub_api_token=os.getenv("HF_TOKEN")
+# )
 
-vision_llm = ChatHuggingFace(llm=hf_endpoint)
+vision_llm = ChatOpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    model="gpt-4o-mini", 
+    temperature=0.1,
+    max_retries=2
+)
+
+llm= ChatOpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    model="gpt-4.1-nano",
+    temperature=0.1,
+    max_tokens=2048,
+    max_retries=3
+)
+
+# vision_llm = ChatHuggingFace(llm=hf_endpoint)
 
 class ArticleSection(TypedDict):
     section_title: str
@@ -64,6 +70,7 @@ class BaseState(TypedDict):
     Text_Feedback: str
     Image_Grading: bool
     Image_Feedback: str
+    revision_count: int
 
 LENGTH_INSTRUCTIONS = {
     "Short (500–700 words)": (
@@ -244,13 +251,25 @@ class DraftOutput(BaseModel):
     sections:List[ArticleSection]
 
 class Gradee(BaseModel):
-    is_pass: Annotated[bool,Field(description="Set to True if the draft is 100% factual and matches the formatting rules. Set to False if there are hallucinations or poor formatting.")]
-    feedback: Annotated[str,Field(description="If is_pass is True, write 'Approved'. If False, provide a strict, bulleted list of specific corrections the writer must make.")]
+    is_pass: Annotated[bool, Field(
+        description=(
+            "Set to True if the draft is broadly factual with no OBVIOUS invented statistics, "
+            "wrong names, or fabricated quotes, AND has correct H2 section headers. "
+            "Set to False ONLY for clear, serious violations. Minor paraphrasing is acceptable."
+        )
+    )]
+    feedback: Annotated[str, Field(
+        description=(
+            "If is_pass is True, write exactly 'Approved'. "
+            "If False, provide a numbered list of only the most critical corrections needed. "
+            "Maximum 3 items. Be specific about what exact text needs changing."
+        )
+    )]
     
 async def check_hal(state:BaseState):
     cleaned_content=state["cleaned_content"]
     sections = state["article_sections"]
-    final_article=state["final_article"]
+    # final_article=state["final_article"]
     compiled_draft = "\n\n".join([f"## {s['section_title']}\n{s['paragraph_text']}" for s in sections])
     audience_key = state.get("target_audience", "General Public")
     tone_key = state.get("tone", "Professional & Objective")
@@ -259,24 +278,28 @@ async def check_hal(state:BaseState):
     audience_desc = AUDIENCE_STYLE.get(audience_key, AUDIENCE_STYLE["General Public"])
     tone_desc = TONE_INSTRUCTIONS.get(tone_key, TONE_INSTRUCTIONS["Professional & Objective"])
     length_desc = LENGTH_INSTRUCTIONS.get(length_key, LENGTH_INSTRUCTIONS["Medium (900–1200 words)"])
-    system_prompt="""
-    You are the Managing Editor and Chief Fact-Checker for a premium publication. Evaluate the submitted draft on three strict criteria.
+    system_prompt = """
+    You are the Managing Editor. Evaluate the draft on three criteria.
 
-    CRITERION 1 — FACTUAL GROUNDING (Hallucination Check):
-    Read every statistic, date, company name, product name, and monetary figure in the draft. Cross-reference each against the Research Blueprint. If the draft contains ANY claim, number, or specific fact that is not present in or directly inferrable from the blueprint, it fails.
+    CRITERION 1 — FACTUAL GROUNDING:
+    Check for OBVIOUS hallucinations only — invented statistics, wrong company names, 
+    fabricated quotes. Minor paraphrasing of facts from the blueprint is ACCEPTABLE.
+    Do NOT fail a draft for rewording a fact that is clearly derived from the blueprint.
 
     CRITERION 2 — TONE & AUDIENCE ALIGNMENT:
-    Evaluate the draft against the Target Audience and Tone profiles provided. Does the vocabulary match the audience's expertise? Does it follow the specific stylistic rules dictated by the tone?
+    Does the vocabulary roughly match the audience profile? 
+    Minor tone deviations are acceptable. Only fail on complete mismatches.
 
-    CRITERION 3 — LENGTH, STRUCTURE & EDITORIAL QUALITY:
-    Evaluate against the Length & Structure constraints. 
-    - Does it look like it hits the rough word count and section count requirements?
-    - Are mandatory elements (like tables or flowcharts) present if required by the length profile?
-    - Does it use proper Markdown heading hierarchy (H1 for title, H2 for sections)?
-    - Does it avoid generic AI transition phrases (e.g., "In conclusion", "It is important to note")?
+    CRITERION 3 — LENGTH & STRUCTURE:
+    - Does it have the roughly correct number of sections?
+    - Does it use H2 headers?
+    - Does it avoid obvious AI filler phrases like "In conclusion" or "It is important to note"?
 
-    If ALL criteria pass, set is_pass to True and feedback to exactly "Approved."
-    If ANY criterion fails, set is_pass to False and provide a numbered list of highly specific corrections the writer must make.
+    IMPORTANT: Be a reasonable editor, not a perfectionist. If the draft is 
+    publication-ready with minor flaws, APPROVE IT. Only reject drafts with 
+    serious factual errors or completely wrong structure.
+
+    Set is_pass=True unless there are CLEAR, SPECIFIC violations.
     """
     human_prompt="""
     RESEARCH BLUEPRINT (Source of Truth):
@@ -292,7 +315,7 @@ async def check_hal(state:BaseState):
     {length_desc}
 
     SUBMITTED DRAFT:
-    {final_article}
+    {compiled_draft}
 
     Evaluate the draft against all three criteria now
     """
@@ -302,12 +325,13 @@ async def check_hal(state:BaseState):
         ("human", human_prompt)
     ])
     
-    structured_llm=llm.with_structured_output(Gradee)
+    structured_llm=llm.with_structured_output(Gradee,method="json_schema", include_raw=False)
     flow=prompt|structured_llm
-    response=await flow.ainvoke({"cleaned_content":cleaned_content,"final_article":compiled_draft})
+    response=await flow.ainvoke({"cleaned_content":cleaned_content,"compiled_draft":compiled_draft,"audience_desc":audience_desc,"tone_desc":tone_desc,"length_desc":length_desc})
     return {
-        "Grading": response.is_pass, 
-        "Feedback": response.feedback
+        # to bypass warnings
+        "Grading": (response.is_pass), 
+        "Feedback": (response.feedback)
         }
 
 class SmartImageDirectives(BaseModel):
@@ -329,6 +353,78 @@ class SmartImageDirectives(BaseModel):
     alt_text: Annotated[str, Field(
         description="A plain 5–8 word description of what the visual shows for accessibility."
     )]
+
+async def logic_gen_image(section_item,client,editor_llm,system_prompt,revision_directive):
+        if isinstance(section_item, str):
+            section_dict = {
+                "section_title": "Section",
+                "paragraph_text": section_item,
+                "image_url": None,
+                "alt_text": None
+            }
+        else:
+            section_dict = section_item
+        paragraph = section_dict.get("paragraph_text", "")
+        human_prompt = "**ARTICLE SECTION TO ILLUSTRATE:**\n\n{paragraph}"
+            
+        prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                ("human", human_prompt)
+            ])
+            
+        flow = prompt | editor_llm
+        llm_result = await flow.ainvoke({
+            "paragraph": paragraph, 
+            "revision_directive": revision_directive
+        }) 
+
+        image_url = ""
+        source_used = "None"
+        pexels_key = os.getenv("PEXELS_API_KEY")
+        if pexels_key:
+            try:
+                p_url = "https://api.pexels.com/v1/search"
+                p_params = {"query": llm_result.pexels_query, "per_page": 1, "orientation": "landscape"}
+                p_headers = {"Authorization": pexels_key}
+                    
+                response = await client.get(p_url, params=p_params, headers=p_headers, timeout=10.0)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("photos") and len(data["photos"]) > 0:
+                        image_url = data["photos"][0]["src"]["landscape"]
+                        source_used = "Pexels"
+            except Exception as e:
+                print(f"Pexels Error: {e}")
+
+        if not image_url:
+            hf_token = os.getenv("HF_TOKEN")
+            if hf_token:
+                hf_url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
+                hf_headers = {"Authorization": f"Bearer {hf_token}"}
+                hf_payload = {"inputs": llm_result.flux_prompt}
+                for attempt in range(3):
+                    try:
+                        hf_res = await client.post(hf_url, headers=hf_headers, json=hf_payload, timeout=60.0)
+                            
+                        if hf_res.status_code == 503:
+                            print(f"HF Model warming up. Waiting 15s... (Attempt {attempt+1}/3)")
+                            await asyncio.sleep(15)
+                            continue
+                                
+                        if hf_res.status_code == 200:
+                            b64_img = base64.b64encode(hf_res.content).decode('utf-8')
+                            image_url = f"data:image/jpeg;base64,{b64_img}"
+                            source_used = "Flux AI"
+                            break
+                    except Exception as e:
+                        print(f"Flux Error: {e}")
+                        break
+        return {
+        **section_dict,
+        "image_url": image_url,
+        "alt_text": llm_result.alt_text,
+        "image_source": source_used
+    }
 
 async def gen_image(state: BaseState):
     previous_feedback = state.get("Image_Feedback", "")
@@ -364,71 +460,17 @@ async def gen_image(state: BaseState):
     editor_llm = llm.with_structured_output(SmartImageDirectives)
 
     async with httpx.AsyncClient() as client:
-        for section in sections:
-            paragraph = section.get("paragraph_text", "")
-            human_prompt = "**ARTICLE SECTION TO ILLUSTRATE:**\n\n{paragraph}"
-            
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("human", human_prompt)
-            ])
-            
-            flow = prompt | editor_llm
-            llm_result = await flow.ainvoke({
-                "paragraph": paragraph, 
-                "revision_directive": revision_directive
-            }) 
+        tasks = [logic_gen_image(s, client, editor_llm, system_prompt, revision_directive) for s in state["article_sections"]]
+        updated_sections = await asyncio.gather(*tasks)
+        # to bypass warnings
 
-            image_url = ""
-            source_used = "None"
-            pexels_key = os.getenv("PEXELS_API_KEY")
-            if pexels_key:
-                try:
-                    p_url = "https://api.pexels.com/v1/search"
-                    p_params = {"query": llm_result.pexels_query, "per_page": 1, "orientation": "landscape"}
-                    p_headers = {"Authorization": pexels_key}
-                    
-                    response = await client.get(p_url, params=p_params, headers=p_headers, timeout=10.0)
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data.get("photos") and len(data["photos"]) > 0:
-                            image_url = data["photos"][0]["src"]["landscape"]
-                            source_used = "Pexels"
-                except Exception as e:
-                    print(f"Pexels Error: {e}")
-
-            if not image_url:
-                hf_token = os.getenv("HF_TOKEN")
-                if hf_token:
-                    hf_url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
-                    hf_headers = {"Authorization": f"Bearer {hf_token}"}
-                    hf_payload = {"inputs": llm_result.flux_prompt}
-                    for attempt in range(3):
-                        try:
-                            hf_res = await client.post(hf_url, headers=hf_headers, json=hf_payload, timeout=60.0)
-                            
-                            if hf_res.status_code == 503:
-                                print(f"HF Model warming up. Waiting 15s... (Attempt {attempt+1}/3)")
-                                await asyncio.sleep(15)
-                                continue
-                                
-                            if hf_res.status_code == 200:
-                                b64_img = base64.b64encode(hf_res.content).decode('utf-8')
-                                image_url = f"data:image/jpeg;base64,{b64_img}"
-                                source_used = "Flux AI"
-                                break
-                        except Exception as e:
-                            print(f"Flux Error: {e}")
-                            break
-            section["image_url"] = image_url
-            section["alt_text"] = llm_result.alt_text
-            section["image_source"] = source_used 
-            updated_sections.append(section)
-
-    return {"article_sections": updated_sections}
+    return {"article_sections": list(updated_sections)}
    
-async def check_grade(state:BaseState)->Literal["Image_gen","Subgraph"]:
+def check_grade(state:BaseState)->Literal["Image_gen","Subgraph"]:
     if state["Grading"]==True:
+        return "Image_gen"
+    elif state.get("revision_count", 0) >= 3:
+        print("Max revisions reached! Forcing the graph to move forward to Image Generation.")
         return "Image_gen"
     else:
         return "Subgraph"
@@ -441,7 +483,7 @@ class FinalPublicationGrade(BaseModel):
 
 async def final_checking(state: BaseState) -> dict:
     sections = state.get("article_sections", [])
-    
+    current_outer_loop = state.get("revision_count", 0) + 1
     system_prompt = """You are the Editor-in-Chief of a high-end, premium global tech and business publication. Your final task is to run a rigorous multi-modal audit on the compiled document layout.
 
     Analyze the layout across three non-negotiable criteria:
@@ -487,7 +529,8 @@ async def final_checking(state: BaseState) -> dict:
             "Text_Grading": result.text_approved,
             "Text_Feedback": result.text_feedback,
             "Image_Grading": result.image_approved,
-            "Image_Feedback": result.image_feedback
+            "Image_Feedback": result.image_feedback,
+            "revision_count": current_outer_loop
         }
     except Exception as e:
         print(f"Layout Vision Review Node Error: {e}")
@@ -496,16 +539,27 @@ async def final_checking(state: BaseState) -> dict:
             "Text_Grading": False,
             "Text_Feedback": "Pipeline execution warning: Evaluation framework timed out. Re-verifying text composition rules.",
             "Image_Grading": False,
-            "Image_Feedback": "Pipeline execution warning: Asset validation layer exception. Force-regenerating visual layout blocks."
+            "Image_Feedback": "Pipeline execution warning: Asset validation layer exception. Force-regenerating visual layout blocks.",
+            "revision_count": current_outer_loop
         }
 
 def check(state: BaseState) -> Literal["Subgraph", "Image_gen", "__end__"]:
+    outer_loops = state.get("revision_count", 0)
+    if state.get("Text_Grading", False) and state.get("Image_Grading", False):
+        print("✅ VISION CHECK PASSED: Newsletter is perfect!")
+        return "__end__"
+        
+    if outer_loops >= 3:
+        print(f" MASTER ESCAPE HATCH TRIGGERED: Hit max outer loops ({outer_loops}). Forcing completion to save costs.")
+        return "__end__"
+        
+    # 3. If under the limit, route back to fix the specific problem
     if not state.get("Text_Grading", False):
+        print(f" Vision rejected text. Rerouting to Subgraph. (Attempt {outer_loops}/3)")
         return "Subgraph"  
     elif not state.get("Image_Grading", False):
-        return "Image_gen"  
-    else:
-        return "__end__"
+        print(f"Vision rejected images. Rerouting to Image_gen. (Attempt {outer_loops}/3)")
+        return "Image_gen"
     
 graph=StateGraph(BaseState)
 graph.add_node("Rewrite_query",query_rewrite)
