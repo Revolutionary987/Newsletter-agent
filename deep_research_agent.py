@@ -1,5 +1,7 @@
 import os
 import asyncio
+import json
+import re
 from dotenv import load_dotenv
 from typing import List,Optional
 from typing_extensions import TypedDict
@@ -10,6 +12,8 @@ from langchain_openai import ChatOpenAI
 from langchain_tavily import TavilySearch
 from langchain.agents import create_agent
 from pydantic import BaseModel
+from langchain_core.output_parsers import PydanticOutputParser
+import ast
 
 load_dotenv()
 
@@ -17,18 +21,19 @@ from langchain_openai import ChatOpenAI
 
 # 1. Instantiate the individual models clearly
 llama_main = ChatOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-    model="meta-llama/llama-3.3-70b-instruct:free",
+    # base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("OPENAI_API_KEY"),
+    model="gpt-4o-mini",
     temperature=0.1,
-    max_retries=1 # Fail fast so it can trigger the fallback instantly!
+    max_retries=1 
 )
 qwen3_coder = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
     model="qwen/qwen3-coder:free",
     temperature=0.1,
-    max_retries=1
+    max_retries=1,
+    max_tokens=8000
 )
 qwen_backup = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
@@ -44,9 +49,6 @@ gpt_oss_backup = ChatOpenAI(
     model="openai/gpt-oss-20b:free",
     temperature=0.1
 )
-
-# 2. Chain them into a resilient execution matrix
-# LangChain tries Llama -> if 429 occurs -> tries Qwen -> if 429 occurs -> tries GPT-OSS
 research_llm = llama_main.with_fallbacks([qwen_backup, qwen3_coder,gpt_oss_backup])
 
 tavily=TavilySearch(
@@ -54,17 +56,22 @@ tavily=TavilySearch(
     search_depth="advanced", 
     include_raw_content=False
 )
+# compressor_llm = ChatOpenAI(
+#     base_url="https://openrouter.ai/api/v1",
+#     api_key=os.getenv("OPENROUTER_API_KEY"),
+#     model="nvidia/nemotron-3-super-120b-a12b:free", 
+#     temperature=0.0
+# )
 compressor_llm = ChatOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-    model="nvidia/nemotron-3-super-120b-a12b:free", 
-    temperature=0.0 
+    api_key=os.getenv("OPENAI_API_KEY"),
+    model="gpt-4o-mini", 
+    temperature=0.1
 )
 writer_llm = ChatOpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENROUTER_API_KEY"),
-    model="openai/gpt-oss-120b:free", 
-    temperature=0.4 
+    api_key=os.getenv("OPENAI_API_KEY"),
+    model="gpt-4o-mini", 
+    temperature=0.3,
+    max_tokens=8000
 )
 writer_llm = writer_llm.with_fallbacks([qwen3_coder])
 class ArticleSection(TypedDict):
@@ -86,6 +93,7 @@ class Research(TypedDict):
     final_article:str
     Feedback:str
     article_sections: List[ArticleSection]
+    revision_count: int
 
 LENGTH_INSTRUCTIONS = {
     "Short (500–700 words)": (
@@ -201,7 +209,7 @@ async def deep_research(state:Research)->dict:
     MANDATORY EXECUTION PROTOCOL — follow these phases in order:
 
     PHASE 1 — TARGETED BREADTH SEARCH (minimum 3 distinct queries)
-    Break the user's topic into its core dimensions based on what matters most to {audience}. 
+    Break the user's topic into its core dimensions based on what matters most to <audience_rules>{audience}</audience_rules>. 
     - For Executives/Investors: Search for market economic impact, ROI, risks, and competitive landscape.
     - For Tech Enthusiasts/Researchers: Search for underlying technical bottlenecks, raw physics/science specs, and benchmarks.
     - For General/Students: Search for historical context, foundational mechanics, and real-world impact.
@@ -211,28 +219,29 @@ async def deep_research(state:Research)->dict:
     After every tool execution, review the retrieved raw text. You must explicitly identify what is MISSING to write a comprehensive {length} article for this specific audience. Ask yourself:
     - "What specific metrics, percentages, or dollar amounts are absent?"
     - "Is this data up-to-date for the current year (2026), or am I looking at stale historical trends?"
-    - "Have I fully satisfied the specific interests of the {audience}?"
-    If gaps exist, immediately formulate a hyper-targeted follow-up query.
+    - "Have I fully satisfied the specific interests of the <audience_rules>{audience}</audience_rules>?"
+    If gaps exist, immediately formulate a hyper-targeted follow-up query. Do not repeat the exact same search query twice. If a search yields poor results, you must change your keywords.
 
     PHASE 3 — VERIFICATION & DISCREPANCY RESOLUTION
-    If you encounter conflicting viewpoints, varying statistics, or disputed timelines across different sources, do not guess. Treat this as an engineering bug. Execute a targeted verification search specifically querying the contradiction to determine the consensus.
-
+    If you encounter conflicting viewpoints, varying statistics, or disputed timelines across different sources, do not guess. Treat this as an engineering bug. Execute a targeted verification search specifically querying the contradiction to determine the consensus. If you cannot find hard data to resolve a gap after multiple searches, explicitly state: 'Data unavailable for [metric/fact]'. Never hallucinate data.
     PHASE 4 — DYNAMIC DOSSIER SYNTHESIS
     Only stop searching when you have exhausted all knowledge gaps or completed at least 3 distinct iterative search cycles. Compile your findings into an enterprise-grade Research Dossier.
     
     CRITICAL COMPILATION INSTRUCTIONS:
-    1. Do NOT use a generic or fixed template. Organize your headers and data logically based exclusively on what the {audience} needs to know.
+    1. Do NOT use a generic or fixed template. Organize your headers and data logically based exclusively on what the <audience_rules>{audience}</audience_rules> needs to know.
     2. Every single fact, metric, and claim MUST end with its source citation [URL] or [Source Name].
     3. Include a "SOURCE REPOSITORY" section at the end: a numbered list of all URLs used, mapped as citations [1], [2] next to facts in the text.
-    4. Completely ignore vague marketing fluff or PR buzzwords. If it isn't a hard fact, discard it."""
+    4. Completely ignore vague marketing fluff or PR buzzwords. If it isn't a hard fact, discard it.
+    5.Completely ignore vague marketing fluff or PR buzzwords. If it isn't a hard fact, discard it.
+    """
 
     deep_research_agent = create_agent(
     model=research_llm,
     tools=[tavily],
-    system_prompt=researcher_prompt.content,
+    system_prompt=researcher_prompt,
     name="deep_research_subgraph"
 )
-    response=deep_research_agent.invoke({
+    response=await deep_research_agent.ainvoke({
         "messages":[{"role":"user","content":state["revised_query"]}]
     })
     compiled_content = response["messages"][-1].content
@@ -283,101 +292,130 @@ async def context_node(state:Research)->str:
     return {"cleaned_content":response.content}
 
 async def gen_content(state: Research) -> dict:
-    """
-    Write the final newsletter sections tailored to the user's explicit preferences.
-    """
     previous_feedback = state.get("Feedback", "")
     audience          = state.get("target_audience", "General Public")
     tone              = state.get("tone", "Professional & Objective")
     length            = state.get("length", "Medium (900–1200 words)")
-    includes          = state.get("include_options", ["mermaid", "images", "citations"])
+    
+    current_count = state.get("revision_count", 0)
+    
     audience_style     = AUDIENCE_STYLE.get(audience, AUDIENCE_STYLE["General Public"])
     tone_instruction   = TONE_INSTRUCTIONS.get(tone, TONE_INSTRUCTIONS["Professional & Objective"])
     length_instruction = LENGTH_INSTRUCTIONS.get(length, LENGTH_INSTRUCTIONS["Medium (900–1200 words)"])
 
-    revision_directive = ""
-    if previous_feedback and previous_feedback not in ("Perfect", "Approved."):
-        revision_directive = f"""
-        **CRITICAL REVISION DIRECTIVE:**
-        Your previous draft was REJECTED by the Managing Editor for the following reasons:
-        <feedback>
-        {previous_feedback}
-        </feedback>
-        You MUST completely rewrite the draft, ensuring every single piece of feedback is addressed and fixed.
-        """
+    is_revision = bool(previous_feedback and previous_feedback not in ("Perfect", "Approved.", "Approved"))
 
-    system_prompt = """You are the Chief Editor and Lead Writer for a premium publication. Your objective is to ingest a hyper-dense, cited data blueprint and synthesize it into a highly engaging, custom-tailored newsletter.
-
-    To achieve maximum performance, you MUST execute your response according to these Operational Vectors:
-
-    <operational_vectors>
-    1. ADAPTIVE TONE & STYLE
-    - AUDIENCE DIRECTIVE: {audience_style}
-    - TONE DIRECTIVE: {tone_instruction}
-    - Never use generic AI transitions, introductory boilerplate, or conversational padding (e.g., "In this section...", "Let's dive into...").
-    - Bold critical variables and core concepts to make the document highly scannable.
-
-    2. STRUCTURAL & LENGTH MANDATE
-    - {length_instruction}
-    - Do NOT use a rigid, generic template. Create logical, highly specific H2 headers based on the data and the audience's needs.
-
-    3. LOGICAL FLOWCHART COMPILATION (MERMAID.JS)
-    - Carefully evaluate if the technical data contains a multi-step pipeline, user-flow, or system architecture.
-    - If it does, you MUST construct a highly precise, syntax-perfect Mermaid.js diagram to visually map out that architecture.
-    - Follow strict Mermaid syntax conventions. Ensure all nodes have explicit textual descriptors.
-
-    4. SACROSANCT DATA PROVENANCE (CITATIONS)
-    - You are strictly prohibited from dropping source citations. Every single bracketed citation (e.g., [1], [2]) present in the input blueprint must be cleanly migrated into your final synthesis.
-    - Append the citation bracket directly to the specific metric, feature, or claim it validates.
-
-    5. VISUAL MAPPING (IMAGE SUBJECTS)
-    - For EVERY section you write, you must generate an `image_subject` field for the photo editor.
-    - This must be a 3–6 word description of a CONCRETE, PHOTOGRAPHABLE real-world scene representing the section (e.g., "surgeon operating room", "server rack lights", "wind turbines at sunset"). 
-    - BAD examples: "artificial intelligence", "future technology", "data" (These are too abstract).
-
-    6. ZERO CONVERSATIONAL LEAKAGE
-    - Do not include greetings, sign-offs, or meta-commentary.
-    </operational_vectors>"""
-
-    human_prompt = """<runtime_execution_manifest>
-        [TARGET USER FOCUS AREA]:
-        {user_query}
-
-        [COMPRESSED DATA BLUEPRINT (CITED)]:
-        {cleaned_content}
-
-        {revision_directive}
+    if is_revision:
+        # NEW: The model must see its previous mistake to fix it!
+        current_draft = json.dumps(state.get("article_sections", []), indent=2)
         
-        COMPILATION MANDATE:
-        Execute your system prompt protocols perfectly. Adapt the blueprint data into pristine paragraphs tailored to the specified audience and tone.
-    </runtime_execution_manifest>"""
+        system_prompt = """You are a Master Copyeditor. Your previous draft was REJECTED by the Managing Editor. 
+        Your ONLY priority right now is to take the previous draft and refactor it to fix the exact formatting and structural violations listed by the editor.
+        
+        CRITICAL CORE RULES:
+        - You must strictly adjust the length to fit: {length_instruction}
+        - You must fix all markdown layout errors (e.g., Use H2 headers for sections).
+        - Strip out any generic AI transition padding or non-factual statements.
+        Do not write a brand new article; fix the current one."""
+        
+        human_prompt = """<editor_rejection_notes>
+        {previous_feedback}
+        </editor_rejection_notes>
+
+        <current_imperfect_sections>
+        {current_draft}
+        </current_imperfect_sections>
+
+        Apply these editorial corrections directly into the structured output format now."""
+        
+    else:
+        system_prompt = """You are the Chief Editor. Ingest the data blueprint and synthesize it into a premium newsletter matching these operational vectors:
+
+        1. ADAPTIVE TONE & STYLE:
+        - AUDIENCE DIRECTIVE: {audience_style}
+        - TONE DIRECTIVE: {tone_instruction}
+        - No generic AI transitions, introductions, or conversational padding.
+
+        2. STRUCTURAL MANDATE:
+        - {length_instruction}
+        - Use clean Markdown heading hierarchy (H2 for sections) inside the text content.
+
+        3. VISUAL MAPPING:
+        - Provide a concrete, photographable real-world description for the image_subject field of every section."""
+
+        human_prompt = """[TARGET FOCUS AREA]: {user_query}
+        [COMPRESSED DATA BLUEPRINT]: {cleaned_content}
+        
+        Generate the structured content output now."""
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
         ("human", human_prompt),
     ])
     
-    # Ensure the LLM outputs to the Pydantic Schema so LangGraph can route it properly
     structured_writer = writer_llm.with_structured_output(DraftOutput)
-    flow = prompt | structured_writer
+    chain = prompt | structured_writer
     
-    response = await flow.ainvoke({
-        "user_query":          state.get("revised_query", "User Topic"),
-        "cleaned_content":     state.get("cleaned_content", ""),
-        "audience_style":      audience_style,
-        "tone_instruction":    tone_instruction,
-        "length_instruction":  length_instruction,
-        "revision_directive":  revision_directive,
-    })
+    try:
+        invoke_inputs = {
+            "user_query": state.get("revised_query", "User Topic"),
+            "cleaned_content": state.get("cleaned_content", ""),
+            "audience_style": audience_style,
+            "tone_instruction": tone_instruction,
+            "length_instruction": length_instruction
+        }
+        if is_revision:
+            invoke_inputs["previous_feedback"] = previous_feedback
+            invoke_inputs["current_draft"] = current_draft
+        parsed_data= await chain.ainvoke(invoke_inputs)
+        if isinstance(parsed_data, dict):
+            raw_sections = parsed_data.get("sections", [])
+        else:
+            raw_sections = parsed_data.sections
+            
+        sections_list = []
+        for s in raw_sections:
+            if isinstance(s, dict):
+                sections_list.append({
+                    "section_title": s.get("section_title", "Untitled Section"),
+                    "paragraph_text": s.get("paragraph_text", ""),
+                    "image_url": s.get("image_url"),
+                    "alt_text": s.get("alt_text")
+                })
+            else:
+                sections_list.append({
+                    "section_title": getattr(s, "section_title", "Untitled Section"),
+                    "paragraph_text": getattr(s, "paragraph_text", ""),
+                    "image_url": getattr(s, "image_url", None),
+                    "alt_text": getattr(s, "alt_text", None)
+                })
+        
+        # NEW: Increment the counter and clear feedback
+        return {
+            "article_sections": sections_list, 
+            "Feedback": "",
+            "revision_count": current_count + 1
+        }
 
-    return {"article_sections": response.sections}
+    except Exception as e:
+        print(f"Content Generation Error: {e}")
+        raise ValueError(f"Generation failed: {e}")
+    
+def check_subgraph(state:Research):
+    feedback=state.get("Feedback", "")
+    if not feedback: 
+        return "Deep_research"
+    if feedback not in ("Perfect","Approved.","Approved"):
+        return "Content_generation"
+    else:
+        return END
 
 subgraph=StateGraph(Research)
 subgraph.add_node("Deep_research",deep_research)
 subgraph.add_node("Compressor",context_node)
 subgraph.add_node("Content_generation",gen_content)
 
-subgraph.add_edge(START,"Deep_research")
+subgraph.add_conditional_edges(START,check_subgraph)
 subgraph.add_edge("Deep_research","Compressor")
 subgraph.add_edge("Compressor","Content_generation")
 subgraph.add_edge("Content_generation",END)
