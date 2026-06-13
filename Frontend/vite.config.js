@@ -5,4 +5,10 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      // Intercepts the legacy engine call and upgrades it to the oklch-compatible engine
+      'html2canvas': 'html2canvas-pro'
+    }
+  }
 })
