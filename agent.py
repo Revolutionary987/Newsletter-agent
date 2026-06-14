@@ -22,6 +22,8 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from langchain_openai import ChatOpenAI
 from deep_research_agent import workflow
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 # hf_endpoint = HuggingFaceEndpoint(
 #     repo_id="google/gemma-4-26B-A4B-it",
@@ -29,22 +31,43 @@ from deep_research_agent import workflow
 #     huggingfacehub_api_token=os.getenv("HF_TOKEN")
 # )
 
-vision_llm = ChatOpenAI(
-    api_key=os.getenv("OPENAI_API_KEY"),
-    model="gpt-4o-mini", 
-    temperature=0.1,
-    max_retries=2
+groq_llm = ChatGroq(
+    groq_api_key=os.getenv("GROQ_API_KEY"),
+    model="llama-3.3-70b-versatile",
+    temperature=0.2,
+    max_tokens=4096
+)
+qwen_llm=ChatNVIDIA(
+    base_url="https://integrate.api.nvidia.com/v1",
+    model="qwen/qwen2.5-coder-32b-instruct",
+    api_key=os.getenv("NVIDIA_API_KEY"), 
+    temperature=0.2,
+    top_p=0.7,
+    max_tokens=1024,
 )
 
-llm= ChatOpenAI(
+gpt= ChatOpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
     model="gpt-4.1-nano",
     temperature=0.1,
     max_tokens=2048,
     max_retries=3
 )
-
-# vision_llm = ChatHuggingFace(llm=hf_endpoint)
+gpt_mini= ChatOpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    model="gpt-4o-mini",
+    temperature=0.1,
+    max_tokens=2048,
+    max_retries=3
+)
+gemini_llm=ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    api_key=os.getenv("GOOGLE_API_KEY"),
+    temperature=0.0,
+)
+llm = groq_llm.with_fallbacks([gemini_llm,gpt_mini])
+mini_llm=qwen_llm.with_fallbacks([gpt])
+vision_llm = gemini_llm.with_fallbacks([gpt_mini])
 
 class ArticleSection(TypedDict):
     section_title: str
@@ -237,7 +260,7 @@ async def query_rewrite(state:BaseState)->dict:
         ("human", human_prompt),
     ])
     
-    response = await (prompt | llm).ainvoke({
+    response = await (prompt | mini_llm).ainvoke({
         "user_query":    state["User_query"],
         "audience_desc": audience_desc,
         "tone_desc":     tone_desc,
@@ -325,7 +348,7 @@ async def check_hal(state:BaseState):
         ("human", human_prompt)
     ])
     
-    structured_llm=llm.with_structured_output(Gradee,method="json_schema", include_raw=False)
+    structured_llm=mini_llm.with_structured_output(Gradee,method="json_schema", include_raw=False)
     flow=prompt|structured_llm
     response=await flow.ainvoke({"cleaned_content":cleaned_content,"compiled_draft":compiled_draft,"audience_desc":audience_desc,"tone_desc":tone_desc,"length_desc":length_desc})
     return {
@@ -335,97 +358,78 @@ async def check_hal(state:BaseState):
         }
 
 class SmartImageDirectives(BaseModel):
-    pexels_query: Annotated[str, Field(
-        description=(
-            "A 2–3 word literal, physical search query for a real stock photo. "
-            "Strictly nouns and objects. No abstract words like 'AI' or 'future'. "
-            "Examples: 'boardroom meeting', 'warehouse automation', 'laboratory drone'."
-        )
+    image_category: Annotated[Literal["stock", "editorial"], Field(
+        description="Choose 'editorial' if the text specifically names real people, companies, or events. Choose 'stock' for abstract concepts."
     )]
-    flux_prompt: Annotated[str, Field(
-        description=(
-            "A detailed, highly photorealistic, cinematic prompt for FLUX.1. "
-            "Describe a real physical scene with lighting, mood, camera framing, and textures. "
-            "Example: 'Candid wide-angle photograph of an advanced automated robotic warehouse floor, "
-            "soft geometric amber overhead lighting, realistic metallic surfaces, volumetric dust motes, shot on 35mm lens, photorealistic.'"
-        )
+    search_query: Annotated[str, Field(
+        description="If 'stock', use physical nouns. If 'editorial', use ONLY the exact Wikipedia Article Title. CRITICAL DIVERSIFICATION RULE: Target specific sub-entities, objects, or locations mentioned in the text (e.g., 'Trump Tower', 'White House', 'SpaceX Starship', 'Mar-a-Lago') rather than defaulting to the main person's name."
     )]
     alt_text: Annotated[str, Field(
-        description="A plain 5–8 word description of what the visual shows for accessibility."
+        description="A plain 5-8 word description of what the visual should show."
     )]
 
 async def logic_gen_image(section_item,client,editor_llm,system_prompt,revision_directive):
-        if isinstance(section_item, str):
+    mcp_client = MultiServerMCPClient({
+        "image_engine": {
+            "command": "python",
+            "args": ["mcp_tools.py"], # Point this to where you saved the server file
+            "transport": "stdio",
+        }
+    })
+    mcp_tools = await mcp_client.get_tools()
+    wiki_tool = next((t for t in mcp_tools if "fetch_Wikipedia" in t.name), None)
+    pexels_tool = next((t for t in mcp_tools if "fetch_pexel" in t.name), None)
+    
+    if isinstance(section_item, str):
             section_dict = {
                 "section_title": "Section",
                 "paragraph_text": section_item,
                 "image_url": None,
                 "alt_text": None
             }
-        else:
-            section_dict = section_item
-        paragraph = section_dict.get("paragraph_text", "")
-        human_prompt = "**ARTICLE SECTION TO ILLUSTRATE:**\n\n{paragraph}"
+    else:
+        section_dict = section_item
+    paragraph = section_dict.get("paragraph_text", "")
+    human_prompt = "**ARTICLE SECTION TO ILLUSTRATE:**\n\n{paragraph}"
             
-        prompt = ChatPromptTemplate.from_messages([
+    prompt = ChatPromptTemplate.from_messages([
                 ("system", system_prompt),
                 ("human", human_prompt)
             ])
             
-        flow = prompt | editor_llm
-        llm_result = await flow.ainvoke({
-            "paragraph": paragraph, 
-            "revision_directive": revision_directive
-        }) 
+    flow = prompt | editor_llm
+    llm_result = await flow.ainvoke({
+        "paragraph": paragraph, 
+        "revision_directive": revision_directive
+    }) 
 
-        image_url = ""
-        source_used = "None"
-        pexels_key = os.getenv("PEXELS_API_KEY")
-        if pexels_key:
-            try:
-                p_url = "https://api.pexels.com/v1/search"
-                p_params = {"query": llm_result.pexels_query, "per_page": 1, "orientation": "landscape"}
-                p_headers = {"Authorization": pexels_key}
-                    
-                response = await client.get(p_url, params=p_params, headers=p_headers, timeout=10.0)
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get("photos") and len(data["photos"]) > 0:
-                        image_url = data["photos"][0]["src"]["landscape"]
-                        source_used = "Pexels"
-            except Exception as e:
-                print(f"Pexels Error: {e}")
+    image_url = ""
+    source_used = "None"
+    query = llm_result.search_query
+    if llm_result.image_category == "editorial" and wiki_tool:
+        try:
+            img_result = await wiki_tool.ainvoke({"wiki_query": query})
+            if img_result:
+                image_url = img_result
+                source_used = f"Wikipedia (via MCP)"
+        except Exception as e:
+            print(f"MCP Wikipedia Tool Execution Warning: {e}")
 
-        if not image_url:
-            hf_token = os.getenv("HF_TOKEN")
-            if hf_token:
-                hf_url = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
-                hf_headers = {"Authorization": f"Bearer {hf_token}"}
-                hf_payload = {"inputs": llm_result.flux_prompt}
-                for attempt in range(3):
-                    try:
-                        hf_res = await client.post(hf_url, headers=hf_headers, json=hf_payload, timeout=60.0)
-                            
-                        if hf_res.status_code == 503:
-                            print(f"HF Model warming up. Waiting 15s... (Attempt {attempt+1}/3)")
-                            await asyncio.sleep(15)
-                            continue
-                                
-                        if hf_res.status_code == 200:
-                            b64_img = base64.b64encode(hf_res.content).decode('utf-8')
-                            image_url = f"data:image/jpeg;base64,{b64_img}"
-                            source_used = "Flux AI"
-                            break
-                    except Exception as e:
-                        print(f"Flux Error: {e}")
-                        break
+    if not image_url and pexels_tool:
+        try:
+            # Runs if category was 'stock' OR if Wikipedia didn't yield an image asset
+            img_result = await pexels_tool.ainvoke({"pexels_query": query})
+            if img_result:
+                image_url = img_result
+                source_used = f"Pexels (via MCP)"
+        except Exception as e:
+            print(f"MCP Pexels Tool Execution Warning: {e}")
         return {
-        **section_dict,
-        "image_url": image_url,
-        "alt_text": llm_result.alt_text,
-        "image_source": source_used
-    }
-
+            **section_dict,
+            "image_url": image_url,
+            "alt_text": llm_result.alt_text,
+            "image_source": source_used
+        }
 async def gen_image(state: BaseState):
     previous_feedback = state.get("Image_Feedback", "")
     sections = state.get("article_sections", [])
@@ -435,25 +439,25 @@ async def gen_image(state: BaseState):
     if previous_feedback and previous_feedback not in ("Perfect", "Approved"):
         revision_directive = f"""
         **CRITICAL REVISION DIRECTIVE:**
-        Your previous image generation assets were REJECTED by the editor for the following reason:
+        Your previous image tracking queries were REJECTED by the editor for the following reason:
         {previous_feedback}
         
-        You MUST change your approach completely for both the pexels_query and flux_prompt to fix this error.
+        Adjust your search parameters and classifications to fix this error.
         """
     system_prompt = """You are the Lead Photo Editor for a premium business and tech publication.
-    Your job is to read a specific section of an article draft and generate two distinct image-retrieval directives to illustrate that exact section.
+    Your job is to read an article section paragraph and supply two distinct search targets to feed our automated waterfall asset-retrieval pipeline.
+
+    RULES FOR STRATEGIC TARGETING:
     
-    Because our system uses a smart waterfall pipeline, you must provide inputs for two completely different engines:
+    1. FOR THE PRIMARY WIKIPEDIA QUERY:
+    - If this paragraph is the INTRODUCTION/SUMMARY of a specific real-world person, use their exact name (e.g., 'Donald Trump').
+    - If this paragraph shifts to a specific asset, product, or location owned/managed by them, query that sub-entity directly (e.g., 'Trump Tower', 'White House', 'Mar-a-Lago') so our images do not repeat.
+    - Always provide the exact, canonical Wikipedia Article Title. Do NOT append descriptive fluff like 'photo' or 'portrait'.
 
-    1. FOR THE PEXELS ENGINE (Stock Photo Search):
-    - Generate an ultra-focused 2-3 word literal search query.
-    - Translate abstract concepts into physical objects (e.g., instead of 'cybersecurity', use 'locked laptop' or 'server rack').
-    - Never include words like 'AI', 'data', 'future', 'technology'.
-
-    2. FOR THE FLUX ENGINE (AI Image Generation):
-    - Generate a highly descriptive, cinematic prompt.
-    - Enforce an editorial style: demand high realism, specific camera lenses (e.g., 'shot on 35mm lens'), professional lighting, and crisp details.
-    - Avoid cartoonish or standard 3D-rendered styling. It must look like high-end photojournalism.
+    2. FOR THE FALLBACK PEXELS QUERY:
+    - Provide a high-signal, literal stock keyword string that represents the visual theme or environment of the paragraph.
+    - This will act as our automatic fallback if Wikipedia doesn't have an image for the primary entity.
+    - Avoid abstract keywords. Use tangible terms like 'corporate boardroom', 'gold podium', 'press briefing room'.
 
     {revision_directive}
     """
@@ -546,11 +550,9 @@ async def final_checking(state: BaseState) -> dict:
 def check(state: BaseState) -> Literal["Subgraph", "Image_gen", "__end__"]:
     outer_loops = state.get("revision_count", 0)
     if state.get("Text_Grading", False) and state.get("Image_Grading", False):
-        print("✅ VISION CHECK PASSED: Newsletter is perfect!")
         return "__end__"
         
     if outer_loops >= 3:
-        print(f" MASTER ESCAPE HATCH TRIGGERED: Hit max outer loops ({outer_loops}). Forcing completion to save costs.")
         return "__end__"
         
     # 3. If under the limit, route back to fix the specific problem

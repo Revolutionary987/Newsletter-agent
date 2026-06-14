@@ -14,7 +14,8 @@ from langchain.agents import create_agent
 from pydantic import BaseModel
 from langchain_core.output_parsers import PydanticOutputParser
 import ast
-
+from langchain_groq import ChatGroq
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
 load_dotenv()
 
 from langchain_openai import ChatOpenAI
@@ -42,14 +43,21 @@ qwen_backup = ChatOpenAI(
     temperature=0.1,
     max_retries=1
 )
-
+qwen_llm=ChatNVIDIA(
+    base_url="https://integrate.api.nvidia.com/v1",
+    model="qwen/qwen2.5-coder-32b-instruct",
+    api_key=os.getenv("NVIDIA_API_KEY"), 
+    temperature=0.1,
+    top_p=0.1,
+    max_tokens=1024,
+)
 gpt_oss_backup = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
     model="openai/gpt-oss-20b:free",
     temperature=0.1
 )
-research_llm = llama_main.with_fallbacks([qwen_backup, qwen3_coder,gpt_oss_backup])
+research_llm = llama_main.with_fallbacks([qwen_backup, qwen3_coder,qwen_llm,gpt_oss_backup])
 
 tavily=TavilySearch(
     max_results=4,               
@@ -67,13 +75,19 @@ compressor_llm = ChatOpenAI(
     model="gpt-4o-mini", 
     temperature=0.1
 )
-writer_llm = ChatOpenAI(
+groq_llm = ChatGroq(
+    groq_api_key=os.getenv("GROQ_API_KEY"),
+    model="llama-3.3-70b-versatile",
+    temperature=0.2,
+    max_tokens=4096
+)
+gpt_writer = ChatOpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
     model="gpt-4o-mini", 
     temperature=0.3,
     max_tokens=8000
 )
-writer_llm = writer_llm.with_fallbacks([qwen3_coder])
+writer_llm = groq_llm.with_fallbacks([gpt_writer,qwen3_coder])
 class ArticleSection(TypedDict):
     section_title: str
     paragraph_text: str
@@ -375,20 +389,14 @@ async def gen_content(state: Research) -> dict:
             
         sections_list = []
         for s in raw_sections:
-            if isinstance(s, dict):
-                sections_list.append({
-                    "section_title": s.get("section_title", "Untitled Section"),
-                    "paragraph_text": s.get("paragraph_text", ""),
-                    "image_url": s.get("image_url"),
-                    "alt_text": s.get("alt_text")
-                })
-            else:
-                sections_list.append({
-                    "section_title": getattr(s, "section_title", "Untitled Section"),
-                    "paragraph_text": getattr(s, "paragraph_text", ""),
-                    "image_url": getattr(s, "image_url", None),
-                    "alt_text": getattr(s, "alt_text", None)
-                })
+            is_dict = isinstance(s, dict)
+            sections_list.append({
+                "section_title": s.get("section_title", "Untitled Section") if is_dict else getattr(s, "section_title", "Untitled Section"),
+                "paragraph_text": s.get("paragraph_text", "") if is_dict else getattr(s, "paragraph_text", ""),
+                "image_subject": s.get("image_subject", None) if is_dict else getattr(s, "image_subject", None),
+                "image_url": s.get("image_url", None) if is_dict else getattr(s, "image_url", None),
+                "alt_text": s.get("alt_text", None) if is_dict else getattr(s, "alt_text", None)
+            })
         
         # NEW: Increment the counter and clear feedback
         return {
