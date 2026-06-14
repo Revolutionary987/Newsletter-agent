@@ -366,15 +366,15 @@ class SmartImageDirectives(BaseModel):
     alt_text: Annotated[str, Field(
         description="A plain 5-8 word description of what the visual should show."
     )]
-async def fetch_wikipedia_image(query: str, client: httpx.AsyncClient) -> str:
+async def fetch_wikipedia_image(query: str, client: httpx.AsyncClient, used_urls: set) -> str:
     headers = {"User-Agent": "AutonomousNewsBot/1.0 (admin@local.test)"}
     try:
-        # Step 1: find the article
+        # Get top 5 results instead of 1
         search = await client.get(
             "https://en.wikipedia.org/w/api.php",
             params={
                 "action": "query", "list": "search",
-                "srsearch": query, "srlimit": 1,
+                "srsearch": query, "srlimit": 5, 
                 "format": "json", "utf8": "1"
             },
             headers=headers, timeout=10.0
@@ -382,31 +382,29 @@ async def fetch_wikipedia_image(query: str, client: httpx.AsyncClient) -> str:
         results = search.json().get("query", {}).get("search", [])
         if not results:
             return ""
+        for result in results:
+            page_title = result["title"]
+            img_resp = await client.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={
+                    "action": "query", "titles": page_title,
+                    "prop": "pageimages", "pithumbsize": 800,
+                    "format": "json", "utf8": "1"
+                },
+                headers=headers, timeout=10.0
+            )
+            pages = img_resp.json().get("query", {}).get("pages", {})
+            for _, page_data in pages.items():
+                url = page_data.get("thumbnail", {}).get("source", "")
+                if url and url not in used_urls: 
+                    print(f"Wikipedia found for '{query}' via '{page_title}': {url}")
+                    used_urls.add(url)
+                    return url
 
-        page_title = results[0]["title"]
-
-        # Step 2: get the thumbnail
-        img_resp = await client.get(
-            "https://en.wikipedia.org/w/api.php",
-            params={
-                "action": "query", "titles": page_title,
-                "prop": "pageimages", "pithumbsize": 800,
-                "format": "json", "utf8": "1"
-            },
-            headers=headers, timeout=10.0
-        )
-        pages = img_resp.json().get("query", {}).get("pages", {})
-        for _, page_data in pages.items():
-            url = page_data.get("thumbnail", {}).get("source", "")
-            if url:
-                print(f"Wikipedia found for '{query}': {url}")
-                return url
     except Exception as e:
         print(f"Wikipedia error: {e}")
     return ""
-
-
-async def fetch_pexels_image(query: str, client: httpx.AsyncClient) -> str:
+async def fetch_pexels_image(query: str, client: httpx.AsyncClient, used_urls: set) -> str:
     pexels_key = os.getenv("PEXELS_API_KEY")
     if not pexels_key:
         print("Pexels: no API key")
@@ -414,23 +412,22 @@ async def fetch_pexels_image(query: str, client: httpx.AsyncClient) -> str:
     try:
         resp = await client.get(
             "https://api.pexels.com/v1/search",
-            params={"query": query, "per_page": 1, "orientation": "landscape"},
+            params={"query": query, "per_page": 10, "orientation": "landscape"}, 
             headers={"Authorization": pexels_key},
             timeout=10.0
         )
         photos = resp.json().get("photos", [])
-        if photos:
-            url = photos[0]["src"]["landscape"]
-            print(f"Pexels found for '{query}': {url}")
-            return url
-        else:
-            print(f"Pexels: no results for '{query}'")
+        for photo in photos:
+            url = photo["src"]["landscape"]
+            if url not in used_urls: 
+                print(f"Pexels found for '{query}': {url}")
+                used_urls.add(url)
+                return url
+        print(f"Pexels: all results already used for '{query}'")
     except Exception as e:
         print(f"Pexels error: {e}")
     return ""
-
-
-async def logic_gen_image(section_item, editor_llm, system_prompt, revision_directive, client):
+async def logic_gen_image(section_item, editor_llm, system_prompt, revision_directive, client, used_urls: set):
     if isinstance(section_item, str):
         section_dict = {
             "section_title": "Section",
@@ -464,13 +461,12 @@ async def logic_gen_image(section_item, editor_llm, system_prompt, revision_dire
     print(f"Section '{section_dict.get('section_title')}' → category={llm_result.image_category}, query='{query}'")
 
     if llm_result.image_category == "editorial":
-        image_url = await fetch_wikipedia_image(query, client)
+        image_url = await fetch_wikipedia_image(query, client, used_urls)  
         if image_url:
             source_used = "Wikipedia"
 
-    # Always try Pexels as fallback
     if not image_url:
-        image_url = await fetch_pexels_image(query, client)
+        image_url = await fetch_pexels_image(query, client, used_urls) 
         if image_url:
             source_used = "Pexels"
 
@@ -480,8 +476,6 @@ async def logic_gen_image(section_item, editor_llm, system_prompt, revision_dire
         "alt_text":     llm_result.alt_text,
         "image_source": source_used
     }
-
-
 async def gen_image(state: BaseState):
     previous_feedback  = state.get("Image_Feedback", "")
     revision_directive = ""
@@ -502,28 +496,35 @@ STOCK PHOTO RULES (for Pexels):
 - GOOD: "server room", "doctor looking at screen", "businessman meeting", "robot arm factory"
 - BAD: "AI market growth", "investment trends", "technology adoption" — these return nothing.
 - Translate every abstract concept into a real scene:
-  "AI in healthcare"   → "doctor medical scan screen"
-  "Investment in AI"   → "businesspeople boardroom laptops"
-  "Machine learning"   → "data center server racks"
+  "AI in healthcare"    → "doctor medical scan screen"
+  "Investment in AI"    → "businesspeople boardroom laptops"
+  "Machine learning"    → "data center server racks"
   "Autonomous vehicles" → "self driving car highway"
-  "AI companies"       → "tech office open space"
+  "AI companies"        → "tech office open space"
 
 EDITORIAL RULES (for Wikipedia):
 - Only use "editorial" when the section is specifically about a real named person or company.
 - Provide the exact Wikipedia article title: "OpenAI", "Nvidia", "Google DeepMind"
 - For all other topics use image_category: "stock"
+- IMPORTANT: Each section must have a DIFFERENT search_query even if topics are related.
+  Never repeat the same search_query across sections.
 
 {revision_directive}
 """
-    editor_llm = llm.with_structured_output(SmartImageDirectives)
-    async with httpx.AsyncClient() as client:
-        tasks = [
-            logic_gen_image(s, editor_llm, system_prompt, revision_directive, client)
-            for s in state["article_sections"]
-        ]
-        updated_sections = await asyncio.gather(*tasks)
 
-    return {"article_sections": list(updated_sections)}
+    editor_llm = llm.with_structured_output(SmartImageDirectives)
+    used_urls = set()
+    updated_sections = []
+
+    async with httpx.AsyncClient() as client:
+        for section in state["article_sections"]:
+            result = await logic_gen_image(
+                section, editor_llm, system_prompt,
+                revision_directive, client, used_urls
+            )
+            updated_sections.append(result)
+
+    return {"article_sections": updated_sections}
 
 def check_grade(state:BaseState)->Literal["Image_gen","Subgraph"]:
     if state["Grading"]==True:
