@@ -444,20 +444,31 @@ async def gen_image(state: BaseState):
         
         Adjust your search parameters and classifications to fix this error.
         """
-    system_prompt = """You are the Lead Photo Editor for a premium business and tech publication.
-    Your job is to read an article section paragraph and supply two distinct search targets to feed our automated waterfall asset-retrieval pipeline.
+    system_prompt = """You are the Lead Photo Editor for a premium publication.
+    Read the article section and generate search targets for our image pipeline.
 
-    RULES FOR STRATEGIC TARGETING:
-    
-    1. FOR THE PRIMARY WIKIPEDIA QUERY:
-    - If this paragraph is the INTRODUCTION/SUMMARY of a specific real-world person, use their exact name (e.g., 'Donald Trump').
-    - If this paragraph shifts to a specific asset, product, or location owned/managed by them, query that sub-entity directly (e.g., 'Trump Tower', 'White House', 'Mar-a-Lago') so our images do not repeat.
-    - Always provide the exact, canonical Wikipedia Article Title. Do NOT append descriptive fluff like 'photo' or 'portrait'.
+    STOCK PHOTO RULES (for Pexels):
+    - Use 2-3 PHYSICAL, PHOTOGRAPHABLE nouns only.
+    - GOOD: "server room", "doctor looking at screen", "businessman meeting", "robot arm factory"
+    - BAD: "AI market growth", "investment trends", "technology adoption" — these return nothing.
+    - Translate every abstract concept into a real scene: 
+    "AI in healthcare" → "doctor medical scan screen"
+    "Investment in AI" → "businesspeople boardroom laptops"
+    "Machine learning" → "data center server racks"
 
-    2. FOR THE FALLBACK PEXELS QUERY:
-    - Provide a high-signal, literal stock keyword string that represents the visual theme or environment of the paragraph.
-    - This will act as our automatic fallback if Wikipedia doesn't have an image for the primary entity.
-    - Avoid abstract keywords. Use tangible terms like 'corporate boardroom', 'gold podium', 'press briefing room'.
+    EDITORIAL RULES (for Wikipedia — use when section names a real person/company):
+    - Provide the exact Wikipedia article title.
+    - "OpenAI" → search_query: "OpenAI"
+    - "Nvidia GPU" → search_query: "Nvidia"
+    - For generic AI topics, use image_category: "stock" instead.
+
+    CRITICAL INSTRUCTION:
+    You MUST respond with ONLY a raw, valid JSON object exactly matching this structure. Do not include markdown formatting or backticks.
+    {
+    "image_category": "editorial" OR "stock",
+    "search_query": "The primary search term",
+    "alt_text": "A brief description of the image"
+    }
 
     {revision_directive}
     """
