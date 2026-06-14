@@ -367,128 +367,163 @@ class SmartImageDirectives(BaseModel):
     alt_text: Annotated[str, Field(
         description="A plain 5-8 word description of what the visual should show."
     )]
+async def fetch_wikipedia_image(query: str, client: httpx.AsyncClient) -> str:
+    headers = {"User-Agent": "AutonomousNewsBot/1.0 (admin@local.test)"}
+    try:
+        # Step 1: find the article
+        search = await client.get(
+            "https://en.wikipedia.org/w/api.php",
+            params={
+                "action": "query", "list": "search",
+                "srsearch": query, "srlimit": 1,
+                "format": "json", "utf8": "1"
+            },
+            headers=headers, timeout=10.0
+        )
+        results = search.json().get("query", {}).get("search", [])
+        if not results:
+            return ""
 
-async def logic_gen_image(section_item, client, editor_llm, system_prompt, revision_directive, wiki_tool, pexels_tool):
-    mcp_client = MultiServerMCPClient({
-        "image_engine": {
-            "command": "python",
-            "args": ["mcp_tools.py"], # Point this to where you saved the server file
-            "transport": "stdio",
-        }
-    })
-    mcp_tools = await mcp_client.get_tools()
-    wiki_tool = next((t for t in mcp_tools if "fetch_Wikipedia" in t.name), None)
-    pexels_tool = next((t for t in mcp_tools if "fetch_pexel" in t.name), None)
-    
+        page_title = results[0]["title"]
+
+        # Step 2: get the thumbnail
+        img_resp = await client.get(
+            "https://en.wikipedia.org/w/api.php",
+            params={
+                "action": "query", "titles": page_title,
+                "prop": "pageimages", "pithumbsize": 800,
+                "format": "json", "utf8": "1"
+            },
+            headers=headers, timeout=10.0
+        )
+        pages = img_resp.json().get("query", {}).get("pages", {})
+        for _, page_data in pages.items():
+            url = page_data.get("thumbnail", {}).get("source", "")
+            if url:
+                print(f"Wikipedia found for '{query}': {url}")
+                return url
+    except Exception as e:
+        print(f"Wikipedia error: {e}")
+    return ""
+
+
+async def fetch_pexels_image(query: str, client: httpx.AsyncClient) -> str:
+    pexels_key = os.getenv("PEXELS_API_KEY")
+    if not pexels_key:
+        print("Pexels: no API key")
+        return ""
+    try:
+        resp = await client.get(
+            "https://api.pexels.com/v1/search",
+            params={"query": query, "per_page": 1, "orientation": "landscape"},
+            headers={"Authorization": pexels_key},
+            timeout=10.0
+        )
+        photos = resp.json().get("photos", [])
+        if photos:
+            url = photos[0]["src"]["landscape"]
+            print(f"Pexels found for '{query}': {url}")
+            return url
+        else:
+            print(f"Pexels: no results for '{query}'")
+    except Exception as e:
+        print(f"Pexels error: {e}")
+    return ""
+
+
+async def logic_gen_image(section_item, editor_llm, system_prompt, revision_directive, client):
     if isinstance(section_item, str):
-            section_dict = {
-                "section_title": "Section",
-                "paragraph_text": section_item,
-                "image_url": None,
-                "alt_text": None
-            }
+        section_dict = {
+            "section_title": "Section",
+            "paragraph_text": section_item,
+            "image_url": None,
+            "alt_text": None
+        }
     else:
-        section_dict = section_item
+        section_dict = dict(section_item)
+
     paragraph = section_dict.get("paragraph_text", "")
-    human_prompt = "**ARTICLE SECTION TO ILLUSTRATE:**\n\n{paragraph}"
-            
+
     prompt = ChatPromptTemplate.from_messages([
-                ("system", system_prompt),
-                ("human", human_prompt)
-            ])
-            
-    flow = prompt | editor_llm
-    llm_result = await flow.ainvoke({
-        "paragraph": paragraph, 
-        "revision_directive": revision_directive
-    }) 
+        ("system", system_prompt),
+        ("human", "**ARTICLE SECTION TO ILLUSTRATE:**\n\n{paragraph}")
+    ])
 
-    image_url = ""
+    try:
+        llm_result = await (prompt | editor_llm).ainvoke({
+            "paragraph": paragraph,
+            "revision_directive": revision_directive
+        })
+    except Exception as e:
+        print(f"Image directive LLM error: {e}")
+        return {**section_dict, "image_url": "", "alt_text": "", "image_source": "None"}
+
+    query       = llm_result.search_query
+    image_url   = ""
     source_used = "None"
-    query = llm_result.search_query
-    if llm_result.image_category == "editorial" and wiki_tool:
-        try:
-            img_result = await wiki_tool.ainvoke({"search_query": query})  
-            if img_result:
-                image_url = img_result
-                source_used = f"Wikipedia (via MCP)"
-        except Exception as e:
-            print(f"MCP Wikipedia Tool Execution Warning: {e}")
 
-    if not image_url and pexels_tool:
-        try:
-            # Runs if category was 'stock' OR if Wikipedia didn't yield an image asset
-            img_result = await pexels_tool.ainvoke({"search_query": query})
-            if img_result:
-                image_url = img_result
-                source_used = f"Pexels (via MCP)"
-        except Exception as e:
-            print(f"MCP Pexels Tool Execution Warning: {e}")
+    print(f"Section '{section_dict.get('section_title')}' → category={llm_result.image_category}, query='{query}'")
+
+    if llm_result.image_category == "editorial":
+        image_url = await fetch_wikipedia_image(query, client)
+        if image_url:
+            source_used = "Wikipedia"
+
+    # Always try Pexels as fallback
+    if not image_url:
+        image_url = await fetch_pexels_image(query, client)
+        if image_url:
+            source_used = "Pexels"
+
     return {
         **section_dict,
-        "image_url": image_url,
-        "alt_text": llm_result.alt_text,
+        "image_url":    image_url,
+        "alt_text":     llm_result.alt_text,
         "image_source": source_used
-        }
-async def gen_image(state: BaseState):
-    previous_feedback = state.get("Image_Feedback", "")
-    sections = state.get("article_sections", [])
-    updated_sections = []
-    
-    revision_directive = ""
-    if previous_feedback and previous_feedback not in ("Perfect", "Approved"):
-        revision_directive = f"""
-        **CRITICAL REVISION DIRECTIVE:**
-        Your previous image tracking queries were REJECTED by the editor for the following reason:
-        {previous_feedback}
-        
-        Adjust your search parameters and classifications to fix this error.
-        """
-    system_prompt = """You are the Lead Photo Editor for a premium publication.
-    Read the article section and generate search targets for our image pipeline.
-
-    STOCK PHOTO RULES (for Pexels):
-    - Use 2-3 PHYSICAL, PHOTOGRAPHABLE nouns only.
-    - GOOD: "server room", "doctor looking at screen", "businessman meeting", "robot arm factory"
-    - BAD: "AI market growth", "investment trends", "technology adoption" — these return nothing.
-    - Translate every abstract concept into a real scene: 
-    "AI in healthcare" → "doctor medical scan screen"
-    "Investment in AI" → "businesspeople boardroom laptops"
-    "Machine learning" → "data center server racks"
-
-    EDITORIAL RULES (for Wikipedia — use when section names a real person/company):
-    - Provide the exact Wikipedia article title.
-    - "OpenAI" → search_query: "OpenAI"
-    - "Nvidia GPU" → search_query: "Nvidia"
-    - For generic AI topics, use image_category: "stock" instead.
-
-    CRITICAL INSTRUCTION:
-    You MUST respond with ONLY a raw, valid JSON object exactly matching this structure. Do not include markdown formatting or backticks.
-    {
-    "image_category": "editorial" OR "stock",
-    "search_query": "The primary search term",
-    "alt_text": "A brief description of the image"
     }
 
-    {revision_directive}
-    """
+
+async def gen_image(state: BaseState):
+    previous_feedback  = state.get("Image_Feedback", "")
+    revision_directive = ""
+
+    if previous_feedback and previous_feedback not in ("Perfect", "Approved"):
+        revision_directive = f"""
+**CRITICAL REVISION DIRECTIVE:**
+Your previous image queries were REJECTED for this reason:
+{previous_feedback}
+Adjust your search parameters and classifications to fix this.
+"""
+
+    system_prompt = """You are the Lead Photo Editor for a premium publication.
+Read the article section and generate search targets for our image pipeline.
+
+STOCK PHOTO RULES (for Pexels):
+- Use 2-3 PHYSICAL, PHOTOGRAPHABLE nouns only.
+- GOOD: "server room", "doctor looking at screen", "businessman meeting", "robot arm factory"
+- BAD: "AI market growth", "investment trends", "technology adoption" — these return nothing.
+- Translate every abstract concept into a real scene:
+  "AI in healthcare"   → "doctor medical scan screen"
+  "Investment in AI"   → "businesspeople boardroom laptops"
+  "Machine learning"   → "data center server racks"
+  "Autonomous vehicles" → "self driving car highway"
+  "AI companies"       → "tech office open space"
+
+EDITORIAL RULES (for Wikipedia):
+- Only use "editorial" when the section is specifically about a real named person or company.
+- Provide the exact Wikipedia article title: "OpenAI", "Nvidia", "Google DeepMind"
+- For all other topics use image_category: "stock"
+
+{revision_directive}
+"""
     editor_llm = llm.with_structured_output(SmartImageDirectives)
-    mcp_client = MultiServerMCPClient({
-        "image_engine": {
-            "command": "python",
-            "args": ["mcp_tools.py"],
-            "transport": "stdio",
-        }
-    })
-    mcp_tools   = await mcp_client.get_tools()
-    wiki_tool   = next((t for t in mcp_tools if "fetch_Wikipedia" in t.name), None)
-    pexels_tool = next((t for t in mcp_tools if "fetch_pexel"     in t.name), None)
     async with httpx.AsyncClient() as client:
         tasks = [
-            logic_gen_image(s, client, editor_llm, system_prompt, revision_directive, wiki_tool, pexels_tool)
+            logic_gen_image(s, editor_llm, system_prompt, revision_directive, client)
             for s in state["article_sections"]
         ]
         updated_sections = await asyncio.gather(*tasks)
+
     return {"article_sections": list(updated_sections)}
 
 def check_grade(state:BaseState)->Literal["Image_gen","Subgraph"]:
