@@ -368,7 +368,7 @@ class SmartImageDirectives(BaseModel):
         description="A plain 5-8 word description of what the visual should show."
     )]
 
-async def logic_gen_image(section_item,client,editor_llm,system_prompt,revision_directive):
+async def logic_gen_image(section_item, client, editor_llm, system_prompt, revision_directive, wiki_tool, pexels_tool):
     mcp_client = MultiServerMCPClient({
         "image_engine": {
             "command": "python",
@@ -408,7 +408,7 @@ async def logic_gen_image(section_item,client,editor_llm,system_prompt,revision_
     query = llm_result.search_query
     if llm_result.image_category == "editorial" and wiki_tool:
         try:
-            img_result = await wiki_tool.ainvoke({"wiki_query": query})
+            img_result = await wiki_tool.ainvoke({"search_query": query})  
             if img_result:
                 image_url = img_result
                 source_used = f"Wikipedia (via MCP)"
@@ -418,17 +418,17 @@ async def logic_gen_image(section_item,client,editor_llm,system_prompt,revision_
     if not image_url and pexels_tool:
         try:
             # Runs if category was 'stock' OR if Wikipedia didn't yield an image asset
-            img_result = await pexels_tool.ainvoke({"pexels_query": query})
+            img_result = await pexels_tool.ainvoke({"search_query": query})
             if img_result:
                 image_url = img_result
                 source_used = f"Pexels (via MCP)"
         except Exception as e:
             print(f"MCP Pexels Tool Execution Warning: {e}")
-        return {
-            **section_dict,
-            "image_url": image_url,
-            "alt_text": llm_result.alt_text,
-            "image_source": source_used
+    return {
+        **section_dict,
+        "image_url": image_url,
+        "alt_text": llm_result.alt_text,
+        "image_source": source_used
         }
 async def gen_image(state: BaseState):
     previous_feedback = state.get("Image_Feedback", "")
@@ -462,14 +462,24 @@ async def gen_image(state: BaseState):
     {revision_directive}
     """
     editor_llm = llm.with_structured_output(SmartImageDirectives)
-
+    mcp_client = MultiServerMCPClient({
+        "image_engine": {
+            "command": "python",
+            "args": ["mcp_tools.py"],
+            "transport": "stdio",
+        }
+    })
+    mcp_tools   = await mcp_client.get_tools()
+    wiki_tool   = next((t for t in mcp_tools if "fetch_Wikipedia" in t.name), None)
+    pexels_tool = next((t for t in mcp_tools if "fetch_pexel"     in t.name), None)
     async with httpx.AsyncClient() as client:
-        tasks = [logic_gen_image(s, client, editor_llm, system_prompt, revision_directive) for s in state["article_sections"]]
+        tasks = [
+            logic_gen_image(s, client, editor_llm, system_prompt, revision_directive, wiki_tool, pexels_tool)
+            for s in state["article_sections"]
+        ]
         updated_sections = await asyncio.gather(*tasks)
-        # to bypass warnings
-
     return {"article_sections": list(updated_sections)}
-   
+
 def check_grade(state:BaseState)->Literal["Image_gen","Subgraph"]:
     if state["Grading"]==True:
         return "Image_gen"

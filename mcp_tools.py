@@ -29,6 +29,7 @@ async def fetch_Wikipedia(search_query:str)->str:
             print(f"Wikipedia error:{e}")
     return ""
 
+@mcp.tool()
 async def fetch_pexel(search_query:str)->str:
     pexels_key=os.getenv("PEXELS_API_KEY")
     if not pexels_key:
@@ -48,6 +49,7 @@ async def fetch_pexel(search_query:str)->str:
             print(f"Pexels Error:{e}")
     return ""
 
-
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
 
 
