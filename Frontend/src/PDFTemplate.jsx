@@ -85,9 +85,12 @@ export default function PDFTemplate({ newsletterData, topic }) {
 
                     {/* Highly Polished Visual Frame Component - Hardcoded to 40% width */}
                     <div className="w-2/5 shrink-0 bg-[#f8fafc] p-2.5 border border-[#e2e8f0] rounded-sm shadow-sm">
+                      {/* 💡 FIX: Added referrerPolicy and crossOrigin attributes here for html2canvas */}
                       <img
                         src={section.image_url}
                         alt={section.alt_text || section.section_title}
+                        referrerPolicy="no-referrer"
+                        crossOrigin="anonymous"
                         className="w-full h-auto max-h-56 object-cover filter grayscale-[15%] rounded-sm border border-[#e2e8f0]/40"
                       />
                       {section.alt_text && (

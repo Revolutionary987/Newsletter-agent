@@ -373,9 +373,12 @@ export default function NewsletterGenerator() {
 
                   {section.image_url && (
                     <div className="mb-8">
+                      {/* 💡 FIX: Added referrerPolicy and crossOrigin attributes here */}
                       <img
                         src={section.image_url}
                         alt={section.alt_text || section.section_title}
+                        referrerPolicy="no-referrer"
+                        crossOrigin="anonymous"
                         className="w-full h-auto object-cover rounded-sm shadow-sm"
                       />
                       {section.alt_text && (
@@ -426,9 +429,7 @@ export default function NewsletterGenerator() {
           </div>
         )}
 
-        {/* 📋 THE HIDDEN PRINT CANVAS AREA
-            This layer stays visually off-screen for web browsers but provides a 
-            clean HTML blueprint grid for html2pdf execution on demand. */}
+        {/* 📋 THE HIDDEN PRINT CANVAS AREA */}
         <div className="absolute top-[-9999px] left-[-9999px] overflow-hidden">
           <div ref={printCanvasRef}>
             <PDFTemplate newsletterData={newsletterData} topic={topic} />
