@@ -23,7 +23,6 @@ from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from langchain_openai import ChatOpenAI
 from deep_research_agent import workflow
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
-from langchain_mcp_adapters.client import MultiServerMCPClient
 
 # hf_endpoint = HuggingFaceEndpoint(
 #     repo_id="google/gemma-4-26B-A4B-it",
