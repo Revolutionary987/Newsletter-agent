@@ -1,6 +1,10 @@
 # Use a lightweight Python image
 FROM python:3.11-slim
 
+# Hugging Face Spaces require running as a non-root user
+# We must create the user FIRST
+RUN useradd -m -u 1000 user
+
 # Set the working directory
 WORKDIR /app
 
@@ -8,11 +12,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy your entire project into the container
-COPY . .
+# COPY files and assign ownership to the non-root user instantly
+COPY --chown=user:user . .
 
-# Hugging Face Spaces require running as a non-root user
-RUN useradd -m -u 1000 user
+# Now switch to the user
 USER user
 ENV HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH
@@ -21,5 +24,4 @@ ENV HOME=/home/user \
 EXPOSE 7860
 
 # Start the FastAPI server
-# Note: Ensure 'main:app' matches your filename and FastAPI variable
 CMD ["uvicorn", "backend:app", "--host", "0.0.0.0", "--port", "7860"]

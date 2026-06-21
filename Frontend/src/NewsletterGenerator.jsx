@@ -1,10 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ChevronDown, FileText } from 'lucide-react';
+import { Download, Sparkles, CheckCircle2, Circle, Loader2, ArrowRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import mermaid from 'mermaid';
-import html2pdf from 'html2pdf.js';
-import PDFTemplate from './PDFTemplate'; // <-- Connect your new print layout layer
 
 mermaid.initialize({
   startOnLoad: false,
@@ -34,44 +32,48 @@ function MermaidDiagram({ chart }) {
 
 function ProgressBar({ currentNode }) {
   const PIPELINE_NODES = [
-    { id: 'Rewrite_query',       label: 'Planning research' },
-    { id: 'Deep_research',       label: 'Deep research' },
-    { id: 'Compressor',          label: 'Compressing data' },
-    { id: 'Content_generation',  label: 'Writing draft' },
-    { id: 'Hallucination_check', label: 'Fact checking' },
-    { id: 'Image_gen',           label: 'Generating images' },
-    { id: 'Final_check',         label: 'Final review' },
+    { id: 'Rewrite_query',       label: 'Planning research angles' },
+    { id: 'Deep_research',       label: 'Executing autonomous deep search' },
+    { id: 'Compressor',          label: 'Distilling high-signal data' },
+    { id: 'Content_generation',  label: 'Drafting premium editorial' },
+    { id: 'Hallucination_check', label: 'Verifying factual integrity' },
+    { id: 'Image_gen',           label: 'Sourcing editorial imagery' },
+    { id: 'Rendering Layout',    label: 'Rendering premium PDF layout' },
   ];
 
   const currentIndex = PIPELINE_NODES.findIndex((n) => n.id === currentNode);
 
   return (
-    <div className="mt-8 p-6 bg-white border border-slate-200 rounded-sm">
-      <p className="text-xs uppercase tracking-widest text-slate-500 font-semibold mb-4">
-        Pipeline Status
-      </p>
-      <div className="space-y-2">
+    <div className="p-8 bg-white border border-slate-200 rounded-2xl shadow-sm max-w-lg mx-auto w-full mt-12 animate-fade-in">
+      <h3 className="text-xs uppercase tracking-[0.2em] text-slate-500 font-semibold mb-6 flex items-center gap-2">
+        <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+        Agentic Pipeline Active
+      </h3>
+      <div className="space-y-5">
         {PIPELINE_NODES.map((node, idx) => {
           const isDone    = idx < currentIndex;
           const isActive  = idx === currentIndex;
+          const isPending = idx > currentIndex;
+
           return (
-            <div key={node.id} className="flex items-center gap-3">
-              <div
-                className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  isDone   ? 'bg-emerald-500' :
-                  isActive ? 'bg-slate-900 animate-pulse' :
-                             'bg-slate-200'
-                }`}
-              />
+            <div key={node.id} className="flex items-center gap-4">
+              {isDone ? (
+                <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+              ) : isActive ? (
+                <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
+                  <div className="w-2.5 h-2.5 bg-blue-600 rounded-full animate-pulse" />
+                </div>
+              ) : (
+                <Circle className="w-5 h-5 text-slate-200 flex-shrink-0" />
+              )}
               <span
-                className={`text-sm ${
-                  isDone   ? 'text-emerald-600' :
+                className={`text-sm tracking-wide ${
+                  isDone   ? 'text-slate-600' :
                   isActive ? 'text-slate-900 font-medium' :
                              'text-slate-400'
                 }`}
               >
                 {node.label}
-                {isActive && '…'}
               </span>
             </div>
           );
@@ -82,65 +84,53 @@ function ProgressBar({ currentNode }) {
 }
 
 export default function NewsletterGenerator() {
-  const [topic,        setTopic]        = useState('');
-  const [audience,     setAudience]     = useState('');
-  const [tone,         setTone]         = useState('');
-  const [length,       setLength]       = useState('');
-  const [keyPoints,    setKeyPoints]    = useState('');
-  const [instructions, setInstructions] = useState('');
+  // Primary States
+  const [topic, setTopic] = useState('');
+  
+  // Configuration States (Defaults match the backend dictionaries)
+  const [audience, setAudience] = useState('General Public');
+  const [tone, setTone] = useState('Professional & Objective');
+  const [length, setLength] = useState('medium');
+  const [selectedTemplate, setSelectedTemplate] = useState('YOUR_APITEMPLATE_ID_1');
 
-  const [isGenerating,   setIsGenerating]   = useState(false);
-  const [currentNode,    setCurrentNode]    = useState(null);
-  const [error,          setError]          = useState(null);
+  // Execution States
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [currentNode, setCurrentNode] = useState(null);
+  const [error, setError] = useState(null);
+  
+  // Output States
   const [newsletterData, setNewsletterData] = useState(null);
-
-  // 🎯 Ref wrapper targeted strictly for our off-screen print component rendering container
-  const printCanvasRef = useRef(null);
-
-  const handleExportPDF = () => {
-    const targetElement = printCanvasRef.current;
-    if (!targetElement) return;
-
-    const exportOptions = {
-      margin:       0, // Zero out bounds since PDFTemplate manages internal P-16 structural spaces
-      filename:     `${topic.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_briefing.pdf`,
-      image:        { type: 'jpeg', quality: 0.98 },
-      html2canvas:  { scale: 2, useCORS: true, letterRendering: true, logging: false },
-      jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-
-    html2pdf().set(exportOptions).from(targetElement).save();
-  };
+  const [pdfDownloadUrl, setPdfDownloadUrl] = useState(null);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!topic.trim()) return;
+
     setIsGenerating(true);
     setCurrentNode('Rewrite_query');
     setError(null);
     setNewsletterData(null);
+    setPdfDownloadUrl(null);
 
-    let enrichedTopic = topic;
-    if (instructions) enrichedTopic += `. Extra instructions: ${instructions}.`;
-
-    const API_BASE_URL =
-      import.meta.env.VITE_API_URL || 'https://aicoder35235-newsletter.hf.space';
+    const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/generate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          topic:      enrichedTopic,
-          audience:   audience   || 'General Public',
-          tone:       tone       || 'Professional & Objective',
-          length:     length     || 'medium',
-          key_points: keyPoints  || 'None',
+          topic: topic,
+          audience: audience,
+          tone: tone,
+          length: length,
+          key_points: 'None', // Ignored per new UI spec, handled by omni-prompt
+          template_id: selectedTemplate 
         }),
       });
 
       if (!response.ok) throw new Error(`Server responded with status ${response.status}`);
 
-      const reader  = response.body.getReader();
+      const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let hasReceivedData = false;
 
@@ -155,11 +145,12 @@ export default function NewsletterGenerator() {
           if (!line.trim() || !line.startsWith('data: ')) continue;
 
           try {
-            const jsonStr    = line.replace(/^data:\s*/, '');
+            const jsonStr = line.replace(/^data:\s*/, '');
             const parsedData = JSON.parse(jsonStr);
 
             if (parsedData.status === 'complete' && parsedData.sections) {
               setNewsletterData(parsedData.sections);
+              setPdfDownloadUrl(parsedData.pdf_url);
               setCurrentNode(null);
               hasReceivedData = true;
             } else if (parsedData.status === 'running' && parsedData.node) {
@@ -173,258 +164,291 @@ export default function NewsletterGenerator() {
         }
       }
 
-      if (!hasReceivedData) throw new Error('Stream completed but no newsletter data was received.');
+      if (!hasReceivedData) throw new Error('Stream completed but no data was received.');
 
     } catch (err) {
       console.error('Generation error:', err);
       setError(err.message || 'Failed to connect to the AI Engine. Please try again.');
     } finally {
       setIsGenerating(false);
-      setCurrentNode(null);
+      if (!newsletterData) setCurrentNode(null);
     }
   };
 
+  // UI Configuration Arrays
+  const audiences = ["General Public", "Tech Enthusiasts", "Executives", "Investors", "Researchers", "Students"];
+  const tones = ["Professional & Objective", "Inspiring", "Conversational", "Analytical", "Educational", "Bold & Opinionated"];
+  const lengths = [{ id: 'short', label: 'Short' }, { id: 'medium', label: 'Medium' }, { id: 'long', label: 'Long' }, { id: 'deep-dive', label: 'Deep Dive' }];
+  const templates = [
+    { id: 'YOUR_APITEMPLATE_ID_1', name: 'Aegis Editorial' },
+    { id: 'YOUR_APITEMPLATE_ID_2', name: 'Corporate Brief' },
+    { id: 'YOUR_APITEMPLATE_ID_3', name: 'Tech Minimalist' }
+  ];
+
   return (
-    <div className="min-h-screen bg-[#F9F9F6] text-slate-900 font-sans p-6 md:p-12 flex flex-col items-center justify-center">
-      <style dangerouslySetInnerHTML={{__html: `
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:wght@400;600;700&display=swap');
-        .font-serif { font-family: 'Playfair Display', serif; }
-        .font-sans  { font-family: 'Inter', sans-serif; }
-      `}} />
-
-      <div className="w-full max-w-3xl">
-
-        {/* Header */}
-        <div className="text-center mb-12">
-          <p className="text-xs uppercase tracking-[0.2em] text-slate-500 mb-3 font-medium">
-            Editorial Studio
-          </p>
-          <h1 className="text-4xl md:text-5xl font-serif font-bold text-slate-900 mb-4 tracking-tight">
-            Curate the narrative.
-          </h1>
-          <p className="text-slate-500 text-lg">
-            High-end, autonomous newsletter generation.
-          </p>
+    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans flex flex-col lg:flex-row overflow-hidden">
+      
+      {/* LEFT COLUMN: CONTROL PANEL */}
+      <div className="w-full lg:w-[480px] xl:w-[540px] bg-white border-r border-slate-200 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10 flex flex-col h-screen lg:sticky lg:top-0">
+        
+        <div className="p-8 border-b border-slate-100 flex-shrink-0">
+          <div className="flex items-center gap-2 mb-2">
+            <Sparkles className="w-5 h-5 text-blue-600" />
+            <span className="text-xs font-bold uppercase tracking-[0.2em] text-blue-600">Aegis Studio</span>
+          </div>
+          <h1 className="text-3xl font-serif font-bold text-slate-900 tracking-tight">Curate the Narrative.</h1>
         </div>
 
-        {/* Form Container */}
-        <div className="bg-white rounded-sm border border-slate-200/60 shadow-[0_2px_15px_-4px_rgba(0,0,0,0.03)] p-8 md:p-12">
+        <div className="flex-1 overflow-y-auto p-8 scrollbar-hide">
           <form onSubmit={handleSubmit} className="space-y-10">
-            {/* Topic Input */}
-            <div className="space-y-2">
-              <label className="block text-[10px] md:text-xs uppercase tracking-widest text-slate-500 font-semibold">
-                What should this newsletter be about?
-              </label>
-              <input
-                type="text"
+            
+            {/* OMNI-PROMPT */}
+            <div className="space-y-3">
+              <label className="block text-xs uppercase tracking-widest text-slate-400 font-semibold">Core Directive</label>
+              <textarea
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="Enter your topic..."
-                className="w-full bg-transparent border-b border-gray-300 py-3 text-xl md:text-2xl text-slate-900 placeholder:text-slate-300 focus:outline-none focus:border-slate-900 transition-colors"
+                placeholder="What do you want to write about? Drop topics, context, or specific instructions here..."
+                rows={5}
                 required
+                className="w-full bg-slate-50/50 border border-slate-200 rounded-xl p-5 text-lg text-slate-800 placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 transition-all resize-none shadow-inner"
               />
             </div>
 
-            {/* Config Selectors */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              <div className="space-y-2">
-                <label className="block text-[10px] md:text-xs uppercase tracking-widest text-slate-500 font-semibold">
-                  Target Audience
-                </label>
-                <div className="relative">
-                  <select
-                    value={audience}
-                    onChange={(e) => setAudience(e.target.value)}
-                    className="w-full bg-transparent border-b border-gray-300 py-3 text-slate-800 appearance-none focus:outline-none focus:border-slate-900 transition-colors cursor-pointer rounded-none"
-                    required
-                  >
-                    <option value="" disabled>Select audience...</option>
-                    <option value="General Public">General Public</option>
-                    <option value="Tech Enthusiasts">Tech Enthusiasts</option>
-                    <option value="Executives">Executives</option>
-                    <option value="Students">Students</option>
-                    <option value="Investors">Investors</option>
-                    <option value="Researchers">Researchers</option>
-                  </select>
-                  <ChevronDown className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <label className="block text-[10px] md:text-xs uppercase tracking-widest text-slate-500 font-semibold">
-                  Editorial Tone
-                </label>
-                <div className="relative">
-                  <select
-                    value={tone}
-                    onChange={(e) => setTone(e.target.value)}
-                    className="w-full bg-transparent border-b border-gray-300 py-3 text-slate-800 appearance-none focus:outline-none focus:border-slate-900 transition-colors cursor-pointer rounded-none"
-                    required
-                  >
-                    <option value="" disabled>Select tone...</option>
-                    <option value="Professional & Objective">Professional & Objective</option>
-                    <option value="Inspiring">Inspiring</option>
-                    <option value="Conversational">Conversational</option>
-                    <option value="Analytical">Analytical</option>
-                    <option value="Educational">Educational</option>
-                    <option value="Bold & Opinionated">Bold & Opinionated</option>
-                  </select>
-                  <ChevronDown className="absolute right-0 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
-                </div>
-              </div>
-            </div>
-
-            {/* Depth Switches */}
-            <div className="space-y-4">
-              <label className="block text-[10px] md:text-xs uppercase tracking-widest text-slate-500 font-semibold">
-                Approximate Length
-              </label>
-              <div className="flex flex-wrap gap-3">
-                {[
-                  { id: 'short',     label: 'Short',     desc: '500–700 words'  },
-                  { id: 'medium',    label: 'Medium',    desc: '900–1200 words' },
-                  { id: 'long',      label: 'Long',      desc: '1500–2000 words' },
-                  { id: 'deep-dive', label: 'Deep-dive', desc: '2500+ words'    },
-                ].map((opt) => (
+            {/* AUDIENCE PILLS */}
+            <div className="space-y-3">
+              <label className="block text-xs uppercase tracking-widest text-slate-400 font-semibold">Target Audience</label>
+              <div className="flex flex-wrap gap-2">
+                {audiences.map((aud) => (
                   <button
-                    key={opt.id}
+                    key={aud}
                     type="button"
-                    onClick={() => setLength(opt.id)}
-                    className={`px-4 py-2 text-sm border transition-all rounded-sm ${
-                      length === opt.id
-                        ? 'border-slate-900 text-slate-900 bg-slate-50/50 font-medium'
-                        : 'border-gray-200 text-slate-500 hover:border-gray-300'
+                    onClick={() => setAudience(aud)}
+                    className={`px-4 py-2 text-sm rounded-full transition-all border ${
+                      audience === aud 
+                        ? 'bg-slate-900 text-white border-slate-900 font-medium shadow-sm' 
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
                     }`}
                   >
-                    {opt.label}: <span className="font-normal">{opt.desc}</span>
+                    {aud}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Text Fields */}
-            <div className="space-y-2">
-              <label className="block text-[10px] md:text-xs uppercase tracking-widest text-slate-500 font-semibold">
-                Key Points to Cover
-              </label>
-              <textarea
-                value={keyPoints}
-                onChange={(e) => setKeyPoints(e.target.value)}
-                placeholder="What are the essential arguments or updates?"
-                rows={4}
-                className="w-full bg-transparent border border-gray-300 p-4 text-slate-800 placeholder:text-slate-300 focus:outline-none focus:border-slate-900 transition-colors rounded-sm resize-none"
-              />
+            {/* TONE PILLS */}
+            <div className="space-y-3">
+              <label className="block text-xs uppercase tracking-widest text-slate-400 font-semibold">Editorial Tone</label>
+              <div className="flex flex-wrap gap-2">
+                {tones.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setTone(t)}
+                    className={`px-4 py-2 text-sm rounded-full transition-all border ${
+                      tone === t 
+                        ? 'bg-slate-900 text-white border-slate-900 font-medium shadow-sm' 
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                    }`}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
             </div>
 
-          
-
-            <div className="pt-6">
-              <button
-                type="submit"
-                disabled={isGenerating}
-                className="w-full md:w-auto px-10 py-4 border border-slate-900 bg-transparent text-slate-900 uppercase tracking-[0.2em] text-xs font-semibold hover:bg-slate-900 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed rounded-none"
-              >
-                {isGenerating ? 'GENERATING...' : 'GENERATE NEWSLETTER'}
-              </button>
+            {/* LENGTH PILLS */}
+            <div className="space-y-3">
+              <label className="block text-xs uppercase tracking-widest text-slate-400 font-semibold">Depth & Length</label>
+              <div className="flex flex-wrap gap-2">
+                {lengths.map((l) => (
+                  <button
+                    key={l.id}
+                    type="button"
+                    onClick={() => setLength(l.id)}
+                    className={`px-4 py-2 text-sm rounded-full transition-all border ${
+                      length === l.id 
+                        ? 'bg-slate-900 text-white border-slate-900 font-medium shadow-sm' 
+                        : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'
+                    }`}
+                  >
+                    {l.label}
+                  </button>
+                ))}
+              </div>
             </div>
+
+            {/* TEMPLATE GRID */}
+            <div className="space-y-3">
+              <label className="block text-xs uppercase tracking-widest text-slate-400 font-semibold">Visual Layout</label>
+              <div className="grid grid-cols-2 gap-3">
+                {templates.map((tmpl) => (
+                  <button
+                    key={tmpl.id}
+                    type="button"
+                    onClick={() => setSelectedTemplate(tmpl.id)}
+                    className={`p-4 text-sm font-medium rounded-xl transition-all border text-left flex flex-col gap-1 ${
+                      selectedTemplate === tmpl.id
+                        ? 'bg-blue-50 border-blue-600 text-blue-900 ring-1 ring-blue-600'
+                        : 'bg-white border-slate-200 text-slate-600 hover:border-slate-400 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="block truncate">{tmpl.name}</span>
+                    <span className="text-[10px] uppercase tracking-wider opacity-60">Template</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
           </form>
         </div>
 
-        {isGenerating && <ProgressBar currentNode={currentNode} />}
-
-        {error && (
-          <div className="mt-8 p-4 bg-red-50 border border-red-200 text-red-600 text-sm rounded-sm">
-            {error}
-          </div>
-        )}
-
-        {/* Output Area */}
-        {newsletterData && (
-          <div className="space-y-6 mt-16 animate-fade-in">
-            {/* Download Interface Bar */}
-            <div className="flex justify-end">
-              <button
-                onClick={handleExportPDF}
-                className="flex items-center gap-2 px-6 py-3 border border-slate-900 text-xs font-semibold uppercase tracking-widest bg-slate-900 text-white hover:bg-transparent hover:text-slate-900 transition-all rounded-none shadow-sm"
-              >
-                <FileText className="w-4 h-4" />
-                Export Publication PDF
-              </button>
-            </div>
-
-            {/* Standard Responsive Browser View Container */}
-            <div className="bg-white border border-slate-200 p-8 md:p-12 shadow-sm">
-              {newsletterData.map((section, index) => (
-                <div key={index} className="mb-12 last:mb-0">
-                  <h2 className="text-3xl font-serif font-bold text-slate-900 mb-6 pb-2 border-b border-slate-100">
-                    {section.section_title}
-                  </h2>
-
-                  {section.image_url && (
-                    <div className="mb-8">
-                      {/* 💡 FIX: Added referrerPolicy and crossOrigin attributes here */}
-                      <img
-                        src={section.image_url}
-                        alt={section.alt_text || section.section_title}
-                        referrerPolicy="no-referrer"
-                        crossOrigin="anonymous"
-                        className="w-full h-auto object-cover rounded-sm shadow-sm"
-                      />
-                      {section.alt_text && (
-                        <p className="text-xs text-slate-400 mt-3 text-center italic tracking-wide">
-                          {section.alt_text}
-                          {section.image_source && ` (via ${section.image_source})`}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="prose prose-slate max-w-none text-slate-700 leading-relaxed">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        code({ node, inline, className, children, ...props }) {
-                          const match = /language-(\w+)/.exec(className || '');
-                          if (!inline && match && match[1] === 'mermaid') {
-                            return <MermaidDiagram chart={String(children).replace(/\n$/, '')} />;
-                          }
-                          return (
-                            <code className={`bg-slate-100 px-1.5 py-0.5 rounded text-sm font-mono text-slate-800 ${className || ''}`} {...props}>
-                              {children}
-                            </code>
-                          );
-                        },
-                        table: ({ node, ...props }) => (
-                          <div className="overflow-x-auto my-8 border border-slate-200 rounded-sm">
-                            <table className="min-w-full divide-y divide-slate-200" {...props} />
-                          </div>
-                        ),
-                        thead: ({ node, ...props }) => <thead className="bg-slate-50" {...props} />,
-                        th: ({ node, ...props }) => <th className="px-4 py-3 text-left text-xs font-semibold text-slate-900 uppercase tracking-wider" {...props} />,
-                        td: ({ node, ...props }) => <td className="whitespace-normal px-4 py-4 text-sm text-slate-600 border-t border-slate-200" {...props} />,
-                        a: ({ node, ...props }) => <a className="text-blue-600 hover:text-blue-800 underline decoration-blue-200 underline-offset-2" {...props} />,
-                        h3: ({ node, ...props }) => <h3 className="text-xl font-bold text-slate-900 mt-8 mb-4" {...props} />,
-                        h4: ({ node, ...props }) => <h4 className="text-lg font-semibold text-slate-900 mt-6 mb-3" {...props} />,
-                        ul: ({ node, ...props }) => <ul className="list-disc pl-5 space-y-2 my-4 marker:text-slate-400" {...props} />,
-                        p: ({ node, ...props }) => <p className="my-4" {...props} />,
-                      }}
-                    >
-                      {section.paragraph_text}
-                    </ReactMarkdown>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 📋 THE HIDDEN PRINT CANVAS AREA */}
-        <div className="absolute top-[-9999px] left-[-9999px] overflow-hidden">
-          <div ref={printCanvasRef}>
-            <PDFTemplate newsletterData={newsletterData} topic={topic} />
-          </div>
+        {/* STICKY FOOTER TRIGGER */}
+        <div className="p-6 border-t border-slate-100 bg-white/80 backdrop-blur-md flex-shrink-0">
+           <button
+             onClick={handleSubmit}
+             disabled={isGenerating || !topic.trim()}
+             className="w-full h-14 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm uppercase tracking-widest rounded-xl shadow-[0_8px_20px_-6px_rgba(37,99,235,0.4)] disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-all flex items-center justify-center gap-3"
+           >
+             {isGenerating ? (
+               <>
+                 <Loader2 className="w-5 h-5 animate-spin" />
+                 Synthesizing...
+               </>
+             ) : (
+               <>
+                 Generate Intelligence
+                 <ArrowRight className="w-5 h-5" />
+               </>
+             )}
+           </button>
         </div>
 
+      </div>
+
+      {/* RIGHT COLUMN: OUTPUT STAGE */}
+      <div className="flex-1 h-screen overflow-y-auto bg-[#F8FAFC] relative scroll-smooth">
+        
+        <div className="max-w-4xl mx-auto p-6 md:p-12 lg:p-16">
+          
+          {error && (
+            <div className="mb-8 p-4 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl flex items-start gap-3">
+              <span className="font-bold">Error:</span> {error}
+            </div>
+          )}
+
+          {/* EMPTY STATE */}
+          {!isGenerating && !newsletterData && !error && (
+            <div className="h-full min-h-[60vh] flex flex-col items-center justify-center text-center opacity-60">
+              <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center mb-6">
+                <FileText className="w-8 h-8 text-slate-400" />
+              </div>
+              <h2 className="text-xl font-medium text-slate-900 mb-2">Awaiting Directive</h2>
+              <p className="text-slate-500 max-w-sm">Configure your parameters and enter a topic to begin the autonomous research pipeline.</p>
+            </div>
+          )}
+
+          {/* PROGRESS STATE */}
+          {isGenerating && <ProgressBar currentNode={currentNode} />}
+
+          {/* FINAL RESULTS */}
+          {newsletterData && !isGenerating && (
+            <div className="animate-fade-in space-y-8">
+              
+              {/* PDF DOWNLOAD BAR */}
+              {pdfDownloadUrl && (
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4 mb-8">
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-lg">Your Document is Ready</h3>
+                    <p className="text-sm text-slate-500">Premium layout rendered successfully via API.</p>
+                  </div>
+                  <a
+                    href={pdfDownloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 px-6 py-3.5 bg-slate-900 hover:bg-slate-800 text-white text-sm font-semibold uppercase tracking-widest rounded-xl transition-all shadow-md flex-shrink-0"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download PDF
+                  </a>
+                </div>
+              )}
+
+              {/* MARKDOWN PREVIEW */}
+              <div className="bg-white border border-slate-200 rounded-3xl p-8 md:p-14 shadow-sm">
+                <div className="mb-12 border-b border-slate-100 pb-8 text-center">
+                  <span className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400 block mb-4">Live Preview</span>
+                  <h1 className="text-4xl md:text-5xl font-serif font-bold text-slate-900 leading-tight">{topic}</h1>
+                </div>
+
+                {newsletterData.map((section, index) => (
+                  <div key={index} className="mb-14 last:mb-0">
+                    <h2 className="text-2xl md:text-3xl font-serif font-bold text-slate-900 mb-6 pb-4 border-b border-slate-100">
+                      {section.section_title}
+                    </h2>
+
+                    {section.image_url && (
+                      <div className="mb-8 group">
+                        <div className="overflow-hidden rounded-2xl border border-slate-100 bg-slate-50">
+                          <img
+                            src={section.image_url}
+                            alt={section.alt_text || section.section_title}
+                            referrerPolicy="no-referrer"
+                            crossOrigin="anonymous"
+                            className="w-full h-auto object-cover max-h-[500px] transition-transform duration-700 group-hover:scale-[1.02]"
+                          />
+                        </div>
+                        {section.alt_text && (
+                          <p className="text-xs text-slate-500 mt-3 text-center italic">
+                            {section.alt_text}
+                            {section.image_source && <span className="uppercase tracking-wider opacity-60 ml-2">— {section.image_source}</span>}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="prose prose-slate prose-lg max-w-none text-slate-700 leading-relaxed font-sans">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          code({ node, inline, className, children, ...props }) {
+                            const match = /language-(\w+)/.exec(className || '');
+                            if (!inline && match && match[1] === 'mermaid') {
+                              return <MermaidDiagram chart={String(children).replace(/\n$/, '')} />;
+                            }
+                            return (
+                              <code className={`bg-slate-100 px-1.5 py-0.5 rounded-md text-[0.9em] font-mono text-slate-800 ${className || ''}`} {...props}>
+                                {children}
+                              </code>
+                            );
+                          },
+                          table: ({ node, ...props }) => (
+                            <div className="overflow-x-auto my-10 border border-slate-200 rounded-xl shadow-sm">
+                              <table className="min-w-full divide-y divide-slate-200 m-0" {...props} />
+                            </div>
+                          ),
+                          thead: ({ node, ...props }) => <thead className="bg-slate-50" {...props} />,
+                          th: ({ node, ...props }) => <th className="px-6 py-4 text-left text-xs font-bold text-slate-900 uppercase tracking-wider border-b border-slate-200" {...props} />,
+                          td: ({ node, ...props }) => <td className="whitespace-normal px-6 py-4 text-sm text-slate-700 border-b border-slate-100" {...props} />,
+                          a: ({ node, ...props }) => <a className="text-blue-600 hover:text-blue-800 underline decoration-blue-200 underline-offset-4 font-medium transition-colors" {...props} />,
+                          h3: ({ node, ...props }) => <h3 className="text-xl font-bold text-slate-900 mt-10 mb-4 font-serif" {...props} />,
+                          h4: ({ node, ...props }) => <h4 className="text-lg font-semibold text-slate-900 mt-8 mb-3" {...props} />,
+                          ul: ({ node, ...props }) => <ul className="list-disc pl-6 space-y-3 my-6 text-slate-700 marker:text-blue-400" {...props} />,
+                          li: ({ node, ...props }) => <li className="pl-2" {...props} />,
+                          p: ({ node, ...props }) => <p className="my-6" {...props} />,
+                          strong: ({ node, ...props }) => <strong className="font-semibold text-slate-900" {...props} />
+                        }}
+                      >
+                        {section.paragraph_text}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
+        </div>
       </div>
     </div>
   );

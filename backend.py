@@ -26,6 +26,7 @@ class initial(BaseModel):
     tone: Optional[str] = "Professional"
     length:Literal["short", "medium", "long","deep-dive"]
     key_points:Optional[str]=None
+    template_id: str
 
 LENGTH_MAP = {
     "short": "Short (500–700 words)",
