@@ -369,7 +369,6 @@ class SmartImageDirectives(BaseModel):
 async def fetch_wikipedia_image(query: str, client: httpx.AsyncClient, used_urls: set) -> str:
     headers = {"User-Agent": "AutonomousNewsBot/1.0 (admin@local.test)"}
     try:
-        # Get top 5 results instead of 1
         search = await client.get(
             "https://en.wikipedia.org/w/api.php",
             params={
@@ -426,7 +425,7 @@ async def fetch_pexels_image(query: str, client: httpx.AsyncClient, used_urls: s
         print(f"Pexels: all results already used for '{query}'")
     except Exception as e:
         print(f"Pexels error: {e}")
-    return ""
+    return ""       
 async def logic_gen_image(section_item, editor_llm, system_prompt, revision_directive, client, used_urls: set):
     if isinstance(section_item, str):
         section_dict = {
@@ -457,8 +456,6 @@ async def logic_gen_image(section_item, editor_llm, system_prompt, revision_dire
     query       = llm_result.search_query
     image_url   = ""
     source_used = "None"
-
-    print(f"Section '{section_dict.get('section_title')}' → category={llm_result.image_category}, query='{query}'")
 
     if llm_result.image_category == "editorial":
         image_url = await fetch_wikipedia_image(query, client, used_urls)  
