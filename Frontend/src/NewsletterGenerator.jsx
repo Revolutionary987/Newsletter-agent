@@ -91,7 +91,9 @@ export default function NewsletterGenerator() {
   const [audience, setAudience] = useState('General Public');
   const [tone, setTone] = useState('Professional & Objective');
   const [length, setLength] = useState('medium');
-  const [selectedTemplate, setSelectedTemplate] = useState('YOUR_APITEMPLATE_ID_1');
+  
+  // 💡 Hidden state to safely pass to the backend without cluttering the UI
+  const [selectedTemplate] = useState('YOUR_APITEMPLATE_ID_1');
 
   // Execution States
   const [isGenerating, setIsGenerating] = useState(false);
@@ -179,31 +181,11 @@ export default function NewsletterGenerator() {
   const audiences = ["General Public", "Tech Enthusiasts", "Executives", "Investors", "Researchers", "Students"];
   const tones = ["Professional & Objective", "Inspiring", "Conversational", "Analytical", "Educational", "Bold & Opinionated"];
   const lengths = [{ id: 'short', label: 'Short' }, { id: 'medium', label: 'Medium' }, { id: 'long', label: 'Long' }, { id: 'deep-dive', label: 'Deep Dive' }];
-  const templates = [
-    { 
-      id: 'YOUR_APITEMPLATE_ID_1', 
-      name: 'Aegis Editorial',
-      desc: 'Magazine style, high contrast.',
-      image: '/template-1.jpg' 
-    },
-    { 
-      id: 'YOUR_APITEMPLATE_ID_2', 
-      name: 'Corporate Brief',
-      desc: 'Clean columns, navy blue accents.',
-      image: '/template-2.jpg'
-    },
-    { 
-      id: 'YOUR_APITEMPLATE_ID_3', 
-      name: 'Tech Minimalist',
-      desc: 'Stark black & white layout.',
-      image: '/template-3.jpg'
-    }
-  ];
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans flex flex-col lg:flex-row overflow-hidden">
       
-      {/* 💡 INJECTING PREMIUM FONTS */}
+      {/* INJECTING PREMIUM FONTS */}
       <style dangerouslySetInnerHTML={{__html: `
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Merriweather:wght@300;400;700;900&display=swap');
         .font-sans  { font-family: 'Plus Jakarta Sans', sans-serif !important; }
@@ -296,50 +278,6 @@ export default function NewsletterGenerator() {
                     }`}
                   >
                     {l.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* VISUAL TEMPLATE GRID */}
-            <div className="space-y-3">
-              <label className="block text-xs uppercase tracking-widest text-slate-400 font-semibold">Visual Layout</label>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {templates.map((tmpl) => (
-                  <button
-                    key={tmpl.id}
-                    type="button"
-                    onClick={() => setSelectedTemplate(tmpl.id)}
-                    className={`relative overflow-hidden text-left rounded-xl transition-all border flex flex-col h-40 group ${
-                      selectedTemplate === tmpl.id
-                        ? 'ring-2 ring-blue-600 border-transparent shadow-md'
-                        : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'
-                    }`}
-                  >
-                    <div className="h-20 w-full bg-slate-100 border-b border-slate-100 overflow-hidden relative">
-                      <img 
-                        src={tmpl.image} 
-                        alt={tmpl.name} 
-                        className="w-full h-full object-cover object-top transition-transform duration-500 group-hover:scale-105" 
-                        onError={(e) => {
-                          e.target.style.display = 'none';
-                          e.target.parentElement.classList.add('bg-slate-200');
-                        }}
-                      />
-                      {selectedTemplate === tmpl.id && (
-                        <div className="absolute top-2 right-2 bg-blue-600 text-white rounded-full p-0.5 shadow-sm">
-                          <CheckCircle2 className="w-4 h-4" />
-                        </div>
-                      )}
-                    </div>
-                    <div className={`p-3 flex-1 flex flex-col justify-between transition-colors ${selectedTemplate === tmpl.id ? 'bg-blue-50/50' : 'bg-white'}`}>
-                      <span className={`text-sm font-bold truncate ${selectedTemplate === tmpl.id ? 'text-blue-900' : 'text-slate-800'}`}>
-                        {tmpl.name}
-                      </span>
-                      <span className={`text-[10px] line-clamp-1 ${selectedTemplate === tmpl.id ? 'text-blue-700/80' : 'text-slate-500'}`}>
-                        {tmpl.desc}
-                      </span>
-                    </div>
                   </button>
                 ))}
               </div>
