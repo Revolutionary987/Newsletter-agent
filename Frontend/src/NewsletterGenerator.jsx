@@ -316,18 +316,7 @@ export default function NewsletterGenerator() {
               />
             </div>
 
-            <div className="space-y-2">
-              <label className="block text-[10px] md:text-xs uppercase tracking-widest text-slate-500 font-semibold">
-                Additional Instructions <span className="text-slate-400 font-normal normal-case tracking-normal ml-1">(Optional)</span>
-              </label>
-              <textarea
-                value={instructions}
-                onChange={(e) => setInstructions(e.target.value)}
-                placeholder="Any specific sources, quotes, or stylistic requests?"
-                rows={3}
-                className="w-full bg-transparent border border-gray-300 p-4 text-slate-800 placeholder:text-slate-300 focus:outline-none focus:border-slate-900 transition-colors rounded-sm resize-none"
-              />
-            </div>
+          
 
             <div className="pt-6">
               <button
