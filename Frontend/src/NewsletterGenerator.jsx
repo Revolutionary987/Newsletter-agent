@@ -32,13 +32,13 @@ function MermaidDiagram({ chart }) {
 
 function ProgressBar({ currentNode }) {
   const PIPELINE_NODES = [
-    { id: 'Rewrite_query',       label: 'Planning research angles' },
-    { id: 'Deep_research',       label: 'Executing autonomous deep search' },
-    { id: 'Compressor',          label: 'Distilling high-signal data' },
-    { id: 'Content_generation',  label: 'Drafting premium editorial' },
-    { id: 'Hallucination_check', label: 'Verifying factual integrity' },
-    { id: 'Image_gen',           label: 'Sourcing editorial imagery' },
-    { id: 'Rendering Layout',    label: 'Rendering premium PDF layout' },
+    { id: 'Rewrite_query',       label: 'Structuring topics' },
+    { id: 'Deep_research',       label: 'Gathering sources' },
+    { id: 'Compressor',          label: 'Distilling information' },
+    { id: 'Content_generation',  label: 'Drafting content' },
+    { id: 'Hallucination_check', label: 'Reviewing accuracy' },
+    { id: 'Image_gen',           label: 'Curating media' },
+    { id: 'Rendering Layout',    label: 'Generating PDF layout' },
   ];
 
   const currentIndex = PIPELINE_NODES.findIndex((n) => n.id === currentNode);
@@ -47,7 +47,7 @@ function ProgressBar({ currentNode }) {
     <div className="p-8 bg-white border border-slate-200 rounded-2xl shadow-sm max-w-lg mx-auto w-full mt-12 animate-fade-in">
       <h3 className="text-xs uppercase tracking-[0.2em] text-slate-500 font-semibold mb-6 flex items-center gap-2">
         <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
-        Agentic Pipeline Active
+        Building Newsletter
       </h3>
       <div className="space-y-5">
         {PIPELINE_NODES.map((node, idx) => {
@@ -87,7 +87,7 @@ export default function NewsletterGenerator() {
   // Primary States
   const [topic, setTopic] = useState('');
   
-  // Configuration States (Defaults match the backend dictionaries)
+  // Configuration States
   const [audience, setAudience] = useState('General Public');
   const [tone, setTone] = useState('Professional & Objective');
   const [length, setLength] = useState('medium');
@@ -123,7 +123,7 @@ export default function NewsletterGenerator() {
           audience: audience,
           tone: tone,
           length: length,
-          key_points: 'None', // Ignored per new UI spec, handled by omni-prompt
+          key_points: 'None', 
           template_id: selectedTemplate 
         }),
       });
@@ -168,7 +168,7 @@ export default function NewsletterGenerator() {
 
     } catch (err) {
       console.error('Generation error:', err);
-      setError(err.message || 'Failed to connect to the AI Engine. Please try again.');
+      setError(err.message || 'Failed to connect to the server. Please try again.');
     } finally {
       setIsGenerating(false);
       if (!newsletterData) setCurrentNode(null);
@@ -180,23 +180,46 @@ export default function NewsletterGenerator() {
   const tones = ["Professional & Objective", "Inspiring", "Conversational", "Analytical", "Educational", "Bold & Opinionated"];
   const lengths = [{ id: 'short', label: 'Short' }, { id: 'medium', label: 'Medium' }, { id: 'long', label: 'Long' }, { id: 'deep-dive', label: 'Deep Dive' }];
   const templates = [
-    { id: 'YOUR_APITEMPLATE_ID_1', name: 'Aegis Editorial' },
-    { id: 'YOUR_APITEMPLATE_ID_2', name: 'Corporate Brief' },
-    { id: 'YOUR_APITEMPLATE_ID_3', name: 'Tech Minimalist' }
+    { 
+      id: 'YOUR_APITEMPLATE_ID_1', 
+      name: 'Aegis Editorial',
+      desc: 'Magazine style, high contrast.',
+      image: '/template-1.jpg' 
+    },
+    { 
+      id: 'YOUR_APITEMPLATE_ID_2', 
+      name: 'Corporate Brief',
+      desc: 'Clean columns, navy blue accents.',
+      image: '/template-2.jpg'
+    },
+    { 
+      id: 'YOUR_APITEMPLATE_ID_3', 
+      name: 'Tech Minimalist',
+      desc: 'Stark black & white layout.',
+      image: '/template-3.jpg'
+    }
   ];
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-slate-900 font-sans flex flex-col lg:flex-row overflow-hidden">
       
+      {/* 💡 INJECTING PREMIUM FONTS */}
+      <style dangerouslySetInnerHTML={{__html: `
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Merriweather:wght@300;400;700;900&display=swap');
+        .font-sans  { font-family: 'Plus Jakarta Sans', sans-serif !important; }
+        .font-serif { font-family: 'Merriweather', serif !important; }
+      `}} />
+
       {/* LEFT COLUMN: CONTROL PANEL */}
       <div className="w-full lg:w-[480px] xl:w-[540px] bg-white border-r border-slate-200 shadow-[4px_0_24px_rgba(0,0,0,0.02)] z-10 flex flex-col h-screen lg:sticky lg:top-0">
         
         <div className="p-8 border-b border-slate-100 flex-shrink-0">
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex items-center gap-2 mb-3">
             <Sparkles className="w-5 h-5 text-blue-600" />
-            <span className="text-xs font-bold uppercase tracking-[0.2em] text-blue-600">Aegis Studio</span>
+            <span className="text-xs font-bold uppercase tracking-[0.2em] text-blue-600">Workspace</span>
           </div>
-          <h1 className="text-3xl font-serif font-bold text-slate-900 tracking-tight">Curate the Narrative.</h1>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight mb-2">Publish with Purpose.</h1>
+          <p className="text-sm text-slate-500">Craft premium newsletters in minutes.</p>
         </div>
 
         <div className="flex-1 overflow-y-auto p-8 scrollbar-hide">
@@ -204,11 +227,11 @@ export default function NewsletterGenerator() {
             
             {/* OMNI-PROMPT */}
             <div className="space-y-3">
-              <label className="block text-xs uppercase tracking-widest text-slate-400 font-semibold">Core Directive</label>
+              <label className="block text-xs uppercase tracking-widest text-slate-400 font-semibold">Newsletter Topic</label>
               <textarea
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="What do you want to write about? Drop topics, context, or specific instructions here..."
+                placeholder="What is this newsletter about? Enter your core subject here..."
                 rows={5}
                 required
                 className="w-full bg-slate-50/50 border border-slate-200 rounded-xl p-5 text-lg text-slate-800 placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-600/20 focus:border-blue-600 transition-all resize-none shadow-inner"
@@ -278,23 +301,45 @@ export default function NewsletterGenerator() {
               </div>
             </div>
 
-            {/* TEMPLATE GRID */}
+            {/* VISUAL TEMPLATE GRID */}
             <div className="space-y-3">
               <label className="block text-xs uppercase tracking-widest text-slate-400 font-semibold">Visual Layout</label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 {templates.map((tmpl) => (
                   <button
                     key={tmpl.id}
                     type="button"
                     onClick={() => setSelectedTemplate(tmpl.id)}
-                    className={`p-4 text-sm font-medium rounded-xl transition-all border text-left flex flex-col gap-1 ${
+                    className={`relative overflow-hidden text-left rounded-xl transition-all border flex flex-col h-40 group ${
                       selectedTemplate === tmpl.id
-                        ? 'bg-blue-50 border-blue-600 text-blue-900 ring-1 ring-blue-600'
-                        : 'bg-white border-slate-200 text-slate-600 hover:border-slate-400 hover:bg-slate-50'
+                        ? 'ring-2 ring-blue-600 border-transparent shadow-md'
+                        : 'border-slate-200 hover:border-slate-300 hover:shadow-sm'
                     }`}
                   >
-                    <span className="block truncate">{tmpl.name}</span>
-                    <span className="text-[10px] uppercase tracking-wider opacity-60">Template</span>
+                    <div className="h-20 w-full bg-slate-100 border-b border-slate-100 overflow-hidden relative">
+                      <img 
+                        src={tmpl.image} 
+                        alt={tmpl.name} 
+                        className="w-full h-full object-cover object-top transition-transform duration-500 group-hover:scale-105" 
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                          e.target.parentElement.classList.add('bg-slate-200');
+                        }}
+                      />
+                      {selectedTemplate === tmpl.id && (
+                        <div className="absolute top-2 right-2 bg-blue-600 text-white rounded-full p-0.5 shadow-sm">
+                          <CheckCircle2 className="w-4 h-4" />
+                        </div>
+                      )}
+                    </div>
+                    <div className={`p-3 flex-1 flex flex-col justify-between transition-colors ${selectedTemplate === tmpl.id ? 'bg-blue-50/50' : 'bg-white'}`}>
+                      <span className={`text-sm font-bold truncate ${selectedTemplate === tmpl.id ? 'text-blue-900' : 'text-slate-800'}`}>
+                        {tmpl.name}
+                      </span>
+                      <span className={`text-[10px] line-clamp-1 ${selectedTemplate === tmpl.id ? 'text-blue-700/80' : 'text-slate-500'}`}>
+                        {tmpl.desc}
+                      </span>
+                    </div>
                   </button>
                 ))}
               </div>
@@ -313,11 +358,11 @@ export default function NewsletterGenerator() {
              {isGenerating ? (
                <>
                  <Loader2 className="w-5 h-5 animate-spin" />
-                 Synthesizing...
+                 Generating...
                </>
              ) : (
                <>
-                 Generate Intelligence
+                 Generate Newsletter
                  <ArrowRight className="w-5 h-5" />
                </>
              )}
@@ -343,8 +388,8 @@ export default function NewsletterGenerator() {
               <div className="w-20 h-20 bg-slate-200 rounded-full flex items-center justify-center mb-6">
                 <FileText className="w-8 h-8 text-slate-400" />
               </div>
-              <h2 className="text-xl font-medium text-slate-900 mb-2">Awaiting Directive</h2>
-              <p className="text-slate-500 max-w-sm">Configure your parameters and enter a topic to begin the autonomous research pipeline.</p>
+              <h2 className="text-xl font-medium text-slate-900 mb-2">Ready to Create</h2>
+              <p className="text-slate-500 max-w-sm">Set your preferences and enter a topic to start drafting your newsletter.</p>
             </div>
           )}
 
@@ -360,7 +405,7 @@ export default function NewsletterGenerator() {
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4 mb-8">
                   <div>
                     <h3 className="font-bold text-slate-900 text-lg">Your Document is Ready</h3>
-                    <p className="text-sm text-slate-500">Premium layout rendered successfully via API.</p>
+                    <p className="text-sm text-slate-500">Premium layout rendered successfully.</p>
                   </div>
                   <a
                     href={pdfDownloadUrl}
@@ -377,7 +422,7 @@ export default function NewsletterGenerator() {
               {/* MARKDOWN PREVIEW */}
               <div className="bg-white border border-slate-200 rounded-3xl p-8 md:p-14 shadow-sm">
                 <div className="mb-12 border-b border-slate-100 pb-8 text-center">
-                  <span className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400 block mb-4">Live Preview</span>
+                  <span className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400 block mb-4 font-sans">Live Preview</span>
                   <h1 className="text-4xl md:text-5xl font-serif font-bold text-slate-900 leading-tight">{topic}</h1>
                 </div>
 
@@ -399,7 +444,7 @@ export default function NewsletterGenerator() {
                           />
                         </div>
                         {section.alt_text && (
-                          <p className="text-xs text-slate-500 mt-3 text-center italic">
+                          <p className="text-xs text-slate-500 mt-3 text-center italic font-sans">
                             {section.alt_text}
                             {section.image_source && <span className="uppercase tracking-wider opacity-60 ml-2">— {section.image_source}</span>}
                           </p>
@@ -407,7 +452,7 @@ export default function NewsletterGenerator() {
                       </div>
                     )}
 
-                    <div className="prose prose-slate prose-lg max-w-none text-slate-700 leading-relaxed font-sans">
+                    <div className="prose prose-slate prose-lg max-w-none text-slate-700 leading-relaxed font-serif">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
@@ -423,7 +468,7 @@ export default function NewsletterGenerator() {
                             );
                           },
                           table: ({ node, ...props }) => (
-                            <div className="overflow-x-auto my-10 border border-slate-200 rounded-xl shadow-sm">
+                            <div className="overflow-x-auto my-10 border border-slate-200 rounded-xl shadow-sm font-sans">
                               <table className="min-w-full divide-y divide-slate-200 m-0" {...props} />
                             </div>
                           ),
@@ -432,7 +477,7 @@ export default function NewsletterGenerator() {
                           td: ({ node, ...props }) => <td className="whitespace-normal px-6 py-4 text-sm text-slate-700 border-b border-slate-100" {...props} />,
                           a: ({ node, ...props }) => <a className="text-blue-600 hover:text-blue-800 underline decoration-blue-200 underline-offset-4 font-medium transition-colors" {...props} />,
                           h3: ({ node, ...props }) => <h3 className="text-xl font-bold text-slate-900 mt-10 mb-4 font-serif" {...props} />,
-                          h4: ({ node, ...props }) => <h4 className="text-lg font-semibold text-slate-900 mt-8 mb-3" {...props} />,
+                          h4: ({ node, ...props }) => <h4 className="text-lg font-semibold text-slate-900 mt-8 mb-3 font-serif" {...props} />,
                           ul: ({ node, ...props }) => <ul className="list-disc pl-6 space-y-3 my-6 text-slate-700 marker:text-blue-400" {...props} />,
                           li: ({ node, ...props }) => <li className="pl-2" {...props} />,
                           p: ({ node, ...props }) => <p className="my-6" {...props} />,
