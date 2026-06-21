@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, Sparkles, CheckCircle2, Circle, Loader2, ArrowRight } from 'lucide-react';
+import { Download, Sparkles, CheckCircle2, Circle, Loader2, ArrowRight, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import mermaid from 'mermaid';
