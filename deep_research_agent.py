@@ -36,6 +36,13 @@ qwen3_coder = ChatOpenAI(
     max_retries=1,
     max_tokens=8000
 )
+gpt_mini= ChatOpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    model="gpt-4o-mini",
+    temperature=0.1,
+    max_tokens=2048,
+    max_retries=3
+)
 qwen_backup = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
@@ -57,7 +64,7 @@ gpt_oss_backup = ChatOpenAI(
     model="openai/gpt-oss-20b:free",
     temperature=0.1
 )
-research_llm = llama_main.with_fallbacks([qwen_backup, qwen3_coder,qwen_llm,gpt_oss_backup])
+research_llm = llama_main.with_fallbacks([gpt_mini,qwen_backup, qwen3_coder,qwen_llm,gpt_oss_backup])
 
 tavily=TavilySearch(
     max_results=4,               

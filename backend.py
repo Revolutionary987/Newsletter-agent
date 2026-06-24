@@ -1,6 +1,8 @@
 import os
 import json
 import httpx
+import asyncio
+import datetime
 from fastapi.responses import StreamingResponse
 from fastapi import FastAPI,HTTPException
 from pydantic import BaseModel
@@ -10,6 +12,9 @@ from typing import Optional,Literal
 from dotenv import load_dotenv
 import traceback
 from agent import workflow,ArticleSection
+import pdfkit
+import base64
+from jinja2 import Environment, FileSystemLoader
 load_dotenv()
 
 app=FastAPI()
@@ -34,34 +39,53 @@ LENGTH_MAP = {
     "long": "Long (1500–2000 words)",
     "deep-dive": "Deep-dive (2500+ words)"
 }
-async def generate_pdf(sections: list[ArticleSection], topic: str, template_id: str) -> str:
-    api_key = os.getenv("APITEMPLATE_KEY")
-    if not api_key:
-        print("Missing APITEMPLATE_KEY")
-        return None
-    url = "https://api.apitemplate.io/v1/create"
-    headers = {"X-API-KEY": api_key}
-    payload = {
-        "template_id": template_id,
-        "data": {
-            "newsletter_title": topic,
-            "sections": sections # Passes your titles, text, and image_urls directly
-        }
-    }
+env = Environment(loader=FileSystemLoader("templates"))
 
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(url, json=payload, headers=headers, timeout=30.0)
-            if response.status_code == 200:
-                result = response.json()
-                return result.get("download_url")
-            else:
-                print(f"PDF Generation Failed: {response.text}")
-                return None
-        except Exception as e:
-            print(f"PDF Request Error: {e}")
-            return None
- 
+def create_pdf_base64_sync(topic: str, article_sections: list) -> str:
+    """
+    Synchronous function that actually renders the HTML and calls pdfkit.
+    """
+    try:
+        # Load your exact template file 
+        template = env.get_template("newsletter_preview.html")
+        
+        # Inject dynamic variables (Topic, Sections, and Current Date)
+        current_month = datetime.now().strftime("%B %Y")
+        html_content = template.render(
+            newsletter_title=topic,
+            article_sections=article_sections,
+            date=current_month
+        )
+        
+        # Set borderless A4 PDF options
+        options = {
+            'page-size': 'A4',
+            'margin-top': '0mm',
+            'margin-right': '0mm',
+            'margin-bottom': '0mm',
+            'margin-left': '0mm',
+            'encoding': "UTF-8"
+        }
+        
+        # Compile HTML into raw PDF binary bytes
+        # False makes sure that the pdf is not stored in harddrive and will be compiled in server's RAM
+        pdf_bytes = pdfkit.from_string(html_content, False, options=options)
+        
+        # Convert binary bytes to Base64 text string for frontend delivery
+        base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
+        # Tells the browser that this isn't just text. This is a Base64 encoded PDF file. I should download it."
+        return f"data:application/pdf;base64,{base64_pdf}"
+        
+    except Exception as e:
+        print(f"PDF Compilation Error: {e}")
+        return None
+async def generate_newsletter_base64(topic: str, article_sections: list) -> str:
+    """
+    Async wrapper so pdfkit doesn't freeze the FastAPI event loop.
+    """
+    # Creating async code by allocating threads 
+    return await asyncio.to_thread(create_pdf_base64_sync, topic, article_sections)
+
 @app.post("/api/v1/generate")
 async def agent_call(request: initial):
     async def event_generator():
@@ -83,7 +107,7 @@ async def agent_call(request: initial):
                         sections = node_output.get("article_sections", [])
                         print(f"  SECTIONS COUNT: {len(sections)}") 
                         yield f"data: {json.dumps({'status': 'running', 'node': 'Rendering Layout'})}\n\n"
-                        pdf_url = await generate_pdf(sections, request.topic, request.template_id)
+                        pdf_url = await generate_newsletter_base64(request.topic,sections)
                         
                         # Return everything back to your React app in one clean package
                         yield f"data: {json.dumps({'status': 'complete', 'sections': sections, 'pdf_url': pdf_url})}\n\n"
