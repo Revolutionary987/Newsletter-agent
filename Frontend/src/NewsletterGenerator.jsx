@@ -53,7 +53,6 @@ function ProgressBar({ currentNode }) {
         {PIPELINE_NODES.map((node, idx) => {
           const isDone    = idx < currentIndex;
           const isActive  = idx === currentIndex;
-          const isPending = idx > currentIndex;
 
           return (
             <div key={node.id} className="flex items-center gap-4">
@@ -92,7 +91,7 @@ export default function NewsletterGenerator() {
   const [tone, setTone] = useState('Professional & Objective');
   const [length, setLength] = useState('medium');
   
-  // 💡 Hidden state to safely pass to the backend without cluttering the UI
+  // Hidden state to safely pass to the backend
   const [selectedTemplate] = useState('YOUR_APITEMPLATE_ID_1');
 
   // Execution States
@@ -135,16 +134,24 @@ export default function NewsletterGenerator() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let hasReceivedData = false;
+      let buffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        // Append chunk to the buffer
+        buffer += decoder.decode(value, { stream: true });
+        
+        // Split on SSE event boundary
+        const events = buffer.split('\n\n');
+        
+        // Pop the last element back into the buffer (it might be incomplete)
+        buffer = events.pop();
 
-        for (const line of lines) {
-          if (!line.trim() || !line.startsWith('data: ')) continue;
+        for (const event of events) {
+          const line = event.trim();
+          if (!line.startsWith('data: ')) continue;
 
           try {
             const jsonStr = line.replace(/^data:\s*/, '');
@@ -152,28 +159,55 @@ export default function NewsletterGenerator() {
 
             if (parsedData.status === 'complete' && parsedData.sections) {
               setNewsletterData(parsedData.sections);
-              setPdfDownloadUrl(parsedData.pdf_url);
               setCurrentNode(null);
               hasReceivedData = true;
+
+              if (parsedData.pdf_url) {
+                setPdfDownloadUrl(parsedData.pdf_url);
+              }
+
             } else if (parsedData.status === 'running' && parsedData.node) {
               setCurrentNode(parsedData.node);
             } else if (parsedData.status === 'error') {
               throw new Error(parsedData.detail || 'Pipeline error occurred.');
             }
+
           } catch (parseErr) {
-            console.warn('Skipped unparseable SSE chunk:', line);
+            // Ignore generic JSON parse errors on incomplete chunks
+            if (!parseErr.message.includes('JSON')) {
+              console.warn('SSE parse error:', parseErr.message);
+            }
           }
         }
       }
 
-      if (!hasReceivedData) throw new Error('Stream completed but no data was received.');
+      // Process any remaining complete events left in the buffer
+      if (buffer.trim()) {
+        const line = buffer.trim();
+        if (line.startsWith('data: ')) {
+          try {
+            const parsedData = JSON.parse(line.replace(/^data:\s*/, ''));
+            if (parsedData.status === 'complete' && parsedData.sections) {
+              setNewsletterData(parsedData.sections);
+              if (parsedData.pdf_url) setPdfDownloadUrl(parsedData.pdf_url);
+              hasReceivedData = true;
+            }
+          } catch (e) {
+            console.warn('Final buffer parse failed:', e.message);
+          }
+        }
+      }
+
+      if (!hasReceivedData) {
+        throw new Error('Stream completed but no data was received.');
+      }
 
     } catch (err) {
       console.error('Generation error:', err);
       setError(err.message || 'Failed to connect to the server. Please try again.');
     } finally {
       setIsGenerating(false);
-      if (!newsletterData) setCurrentNode(null);
+      setCurrentNode(null);
     }
   };
 
