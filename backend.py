@@ -137,11 +137,11 @@ async def generate_pdf(topic: str, article_sections: list) -> str:
     #    - paragraph_text: Markdown → Actual HTML!
     clean_sections = []
     for i, section in enumerate(article_sections):
-        raw_markdown = section.get("paragraph_text", "")
+        raw_markdown = section.get("paragraph_text", "").replace("#", "").strip()
         html_text = markdown.markdown(raw_markdown, extensions=['tables', 'fenced_code'])
-
+        clean_title = section.get("section_title", "").replace("#", "").strip()
         clean_sections.append({
-            "section_title":  section.get("section_title",  ""),
+            "section_title":  clean_title,
             "paragraph_text": html_text,
             "image_url":      base64_images[i],
             "alt_text":       section.get("alt_text",       ""),
