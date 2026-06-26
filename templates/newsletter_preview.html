@@ -206,115 +206,53 @@
     </style>
 </head>
 <body>
-<!-- ═══════════════════════════════════════════════
-HEADER — table layout only, no flexbox
-═══════════════════════════════════════════════ -->
-<table width="760" border="0" cellspacing="0" cellpadding="0"
-       style="background-color:#021631; padding:32px 48px; margin:0 auto;">
-    <tr>
-        <td valign="middle" width="480">
-            <table border="0" cellspacing="0" cellpadding="0">
-                <tr>
-                    <td width="70" valign="middle">
-                        <!-- LOGO IMAGE -->
-                        <img
-                            src="https://raw.githubusercontent.com/Revolutionary987/Newsletter-agent/main/WhatsApp%20Image%202026-06-10%20at%2022.35.36.jpeg"
-                            alt="AAA UVCE Logo"
-                            width="60"
-                            height="60"
-                            style="border-radius:50%; display:block;"
-                        />
-                    </td>
-                    <td valign="middle" style="padding-left:14px;">
-                        <p style="margin:0; font-size:18px; font-weight:800; color:#ffffff;
-text-transform:uppercase; letter-spacing:0.5px;
-font-family:Arial,sans-serif;">
-AGENTFORCE ACADEMIA ADVOCATES
-                        </p>
-                        <p style="margin:4px 0 0; font-size:10px; font-weight:600; color:#cbd5e1;
-text-transform:uppercase; letter-spacing:1.5px;
-font-family:Arial,sans-serif;">
-University Visvesvaraya College of Engineering
-                        </p>
-                        <p style="margin:5px 0 0; font-size:12px; color:#38bdf8;
-font-style:italic; font-family:Arial,sans-serif;">
-Empowering Students Through AI + Salesforce
-                        </p>
-                    </td>
-                </tr>
-            </table>
-        </td>
-        <td align="right" valign="middle">
-            <p style="margin:0; font-size:12px; font-weight:600; color:#cbd5e1;
-text-transform:uppercase; letter-spacing:1px;
-border:1px solid rgba(255,255,255,0.2);
-padding:6px 14px; font-family:Arial,sans-serif;">
-{{ date }}
-            </p>
-        </td>
-    </tr>
-</table>
-<!-- ═══════════════════════════════════════════════
-BODY CONTENT
-═══════════════════════════════════════════════ -->
-<table width="760" border="0" cellspacing="0" cellpadding="0"
-       style="background-color:#ffffff; padding:40px 48px; margin:0 auto;">
-    <tr>
-        <td>
-            <!-- Newsletter Title -->
-            <p style="font-size:26px; font-weight:800; color:#021631;
-margin:0 0 32px 0; line-height:1.3;
-border-left:5px solid #38bdf8; padding-left:14px;
-font-family:Arial,sans-serif;">
-{{ newsletter_title }}
-            </p>
-            {% for section in article_sections %}
-            <div class="pdf-section">
-                <div class="section-badge">Insight Brief</div>
-                <p class="section-title">{{ section['section_title'] }}</p>
-{% if section['image_url'] %}
-                <div style="margin-bottom:16px; text-align:center;">
-                    <img
-                        src="{{ section['image_url'] }}"
-                        alt="{{ section['alt_text'] or 'Article image' }}"
-                        width="664"
-                        height="260"
-                        style="display:block; margin:0 auto; border-radius:6px;"
-                    />
-{% if section['alt_text'] %}
-                    <p class="image-caption">{{ section['alt_text'] }}</p>
-{% endif %}
-                </div>
-{% endif %}
-                <div class="section-text">
-{{ section['paragraph_text'] | safe }}
-                </div>
+
+    <div class="template-header">
+        <div class="header-brand">
+            <img class="logo-img" src="https://raw.githubusercontent.com/Revolutionary987/Newsletter-agent/main/WhatsApp%20Image%202026-06-10%20at%2022.35.36.jpeg" alt="AAA UVCE Logo" />
+            <div class="brand-text">
+                <h1>AGENTFORCE ACADEMIA ADVOCATES</h1>
+                <h2>University Visvesvaraya College of Engineering</h2>
+                <p>Empowering Students Through AI + Salesforce</p>
             </div>
-{% endfor %}
-        </td>
-    </tr>
-</table>
-<!-- ═══════════════════════════════════════════════
-FOOTER
-═══════════════════════════════════════════════ -->
-<table width="760" border="0" cellspacing="0" cellpadding="0"
-       style="background-color:#021631; padding:32px 48px;
-border-top:1px solid rgba(255,255,255,0.1); margin:0 auto;">
-    <tr>
-        <td>
-            <p class="footer-text">
-Powered by <strong>Salesforce</strong>
-&nbsp;&bull;&nbsp;
-                <span style="color:#38bdf8;">Agentforce</span>
-&nbsp;&bull;&nbsp;
-Innovation
-            </p>
-            <p class="footer-copy">
-&copy; 2026 Agentforce Academia Advocates (AAA) &mdash; UVCE. All Rights Reserved.<br/>
-Curated autonomously via Aegis Studio.
-            </p>
-        </td>
-    </tr>
-</table>
+        </div>
+        <div class="header-date">{{ date }}</div>
+    </div>
+
+    <div class="template-body">
+        <p class="newsletter-title">{{ newsletter_title }}</p>
+
+        {% for section in article_sections %}
+        <div class="pdf-section">
+            <div class="section-badge">Insight Brief</div>
+            <p class="section-title">{{ section.section_title }}</p>
+
+            {% if section.image_url %}
+            <div class="image-wrapper">
+                <img src="{{ section.image_url }}" alt="{{ section.alt_text or 'Article image' }}" />
+                {% if section.alt_text %}
+                <p class="image-caption">{{ section.alt_text }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <div class="section-text">
+                {{ section.paragraph_text | safe }}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="template-footer">
+        <p class="footer-text">
+            Powered by <strong>Salesforce</strong> &nbsp;&bull;&nbsp; 
+            <span style="color:#38bdf8;">Agentforce</span> &nbsp;&bull;&nbsp; Innovation
+        </p>
+        <p class="footer-copy">
+            &copy; 2026 Agentforce Academia Advocates (AAA) &mdash; UVCE. All Rights Reserved.<br/>
+            Curated autonomously via Aegis Studio.
+        </p>
+    </div>
+
 </body>
 </html>
