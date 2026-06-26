@@ -36,15 +36,13 @@ groq_llm = ChatGroq(
     temperature=0.2,
     max_tokens=4096
 )
-qwen_llm=ChatNVIDIA(
-    base_url="https://integrate.api.nvidia.com/v1",
-    model="qwen/qwen2.5-coder-32b-instruct",
-    api_key=os.getenv("NVIDIA_API_KEY"), 
+groq_mini=ChatGroq(
+    groq_api_key=os.getenv("GROQ_API_NEW"),
+    model="llama-3.1-8b-instant",
     temperature=0.2,
-    top_p=0.7,
-    max_tokens=1024,
+    max_completion_tokens=1024,
+    top_p=1
 )
-
 gpt= ChatOpenAI(
     api_key=os.getenv("OPENAI_API_KEY"),
     model="gpt-4.1-nano",
@@ -65,7 +63,7 @@ gemini_llm=ChatGoogleGenerativeAI(
     temperature=0.0,
 )
 llm = groq_llm.with_fallbacks([gemini_llm,gpt_mini])
-mini_llm=qwen_llm.with_fallbacks([gpt])
+mini_llm=gpt
 vision_llm = gemini_llm.with_fallbacks([gpt_mini])
 
 class ArticleSection(TypedDict):
@@ -259,7 +257,7 @@ async def query_rewrite(state:BaseState)->dict:
         ("human", human_prompt),
     ])
     
-    response = await (prompt | mini_llm).ainvoke({
+    response = await (prompt | groq_mini).ainvoke({
         "user_query":    state["User_query"],
         "audience_desc": audience_desc,
         "tone_desc":     tone_desc,
@@ -541,23 +539,22 @@ class FinalPublicationGrade(BaseModel):
 async def final_checking(state: BaseState) -> dict:
     sections = state.get("article_sections", [])
     current_outer_loop = state.get("revision_count", 0) + 1
-    system_prompt = """You are the Editor-in-Chief of a high-end, premium global tech and business publication. Your final task is to run a rigorous multi-modal audit on the compiled document layout.
+    system_prompt = """You are the Editor-in-Chief of a high-end, premium global tech and business publication. Your final task is to run a rigorous audit on the compiled document layout.
 
-    Analyze the layout across three non-negotiable criteria:
+Analyze the layout across two non-negotiable criteria:
 
-    CRITERION 1: LANGUAGE QUALITY & TONE INTEGRITY
-    - Audit the prose for professional readability, clean markdown headers (H2 for sections), and total elimination of lazy AI phrases.
-    - Check that the information flows organically between sections without disjointed transitions or structural blanks.
+CRITERION 1: LANGUAGE QUALITY & TONE INTEGRITY
+- Audit the prose for professional readability, clean markdown headers (H2 for sections), and total elimination of lazy AI phrases.
+- Check that the information flows organically between sections without disjointed transitions or structural blanks.
 
-    CRITERION 2: VISUAL QUALITY & AESTHETIC STANDARDS
-    - Inspect the visual elements for professional artistic execution.
-    - Reject assets that suffer from rendering artifacts, extreme blurriness, distortion, or cheap vector clip-art styles. Every visual must look like premium editorial design.
+CRITERION 2: CROSS-MODAL SYNCHRONIZATION (THE MATCH)
+- Evaluate the coordination between the image and the text section it is bound to.
+- IMPORTANT GUARDRAIL: You MUST be extremely lenient with stock photos. Stock photos (from Pexels) can only capture physical reality, not abstract code or specific software brands. 
+- A photo of a generic programmer, a clean tech office, server racks, or a data scientist is a PERFECT match for any section discussing AI, deep learning, benchmarks, or software architecture. 
+- Do NOT reject an image for being a "generic stock asset" or a physical metaphor.
+- ONLY fail the image grading if the subject matter is wildly out of place (e.g., a photo of a beach or food for an article about technology).
 
-    CRITERION 3: CROSS-MODAL SYNCHRONIZATION (THE MATCH)
-    - Evaluate the absolute coordination between the image and the text section it is bound to.
-    - The visual assets must represent the concrete nouns, actions, or underlying data trends described in the paragraph. A high-quality text paired with an irrelevant or generic stock asset must fail.
-
-    Populate the FinalPublicationGrade structure with rigorous precision based on these rules."""
+Populate the FinalPublicationGrade structure with rigorous precision based on these rules."""
 
     message_content = [{"type": "text", "text": "Begin premium publication layout audit now:"}]
     
@@ -607,8 +604,6 @@ def check(state: BaseState) -> Literal["Subgraph", "Image_gen", "__end__"]:
         
     if outer_loops >= 3:
         return "__end__"
-        
-    # 3. If under the limit, route back to fix the specific problem
     if not state.get("Text_Grading", False):
         print(f" Vision rejected text. Rerouting to Subgraph. (Attempt {outer_loops}/3)")
         return "Subgraph"  

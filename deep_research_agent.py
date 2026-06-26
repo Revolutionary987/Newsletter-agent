@@ -21,10 +21,9 @@ load_dotenv()
 from langchain_openai import ChatOpenAI
 
 # 1. Instantiate the individual models clearly
-llama_main = ChatOpenAI(
-    # base_url="https://openrouter.ai/api/v1",
-    api_key=os.getenv("OPENAI_API_KEY"),
-    model="gpt-4o-mini",
+llama_main = ChatGroq(  # base_url="https://openrouter.ai/api/v1",
+    api_key=os.getenv("GROQ_API_NEW"),
+    model="llama-3.3-70b-versatile",
     temperature=0.1,
     max_retries=1 
 )
@@ -50,21 +49,21 @@ qwen_backup = ChatOpenAI(
     temperature=0.1,
     max_retries=1
 )
-qwen_llm=ChatNVIDIA(
-    base_url="https://integrate.api.nvidia.com/v1",
-    model="qwen/qwen2.5-coder-32b-instruct",
-    api_key=os.getenv("NVIDIA_API_KEY"), 
-    temperature=0.1,
-    top_p=0.1,
-    max_tokens=1024,
-)
+# qwen_llm=ChatNVIDIA(
+#     base_url="https://integrate.api.nvidia.com/v1",
+#     model="qwen/qwen2.5-coder-32b-instruct",
+#     api_key=os.getenv("NVIDIA_API_KEY"), 
+#     temperature=0.1,
+#     top_p=0.1,
+#     max_tokens=1024,
+# )
 gpt_oss_backup = ChatOpenAI(
     base_url="https://openrouter.ai/api/v1",
     api_key=os.getenv("OPENROUTER_API_KEY"),
     model="openai/gpt-oss-20b:free",
     temperature=0.1
 )
-research_llm = llama_main.with_fallbacks([gpt_mini,qwen_backup, qwen3_coder,qwen_llm,gpt_oss_backup])
+research_llm = llama_main.with_fallbacks([gpt_mini,qwen_backup, qwen3_coder,gpt_oss_backup])
 
 tavily=TavilySearch(
     max_results=4,               

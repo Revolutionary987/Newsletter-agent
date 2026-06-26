@@ -2,114 +2,225 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ newsletter_title }}</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;700;800&display=swap');
-        
+        /*
+         * xhtml2pdf CSS RULES:
+         * ✅ Supported : fixed px/pt widths, page-break-inside, border, padding, margin, font-size, color
+         * ❌ NOT supported: width:100%, max-width, display:flex, box-shadow, object-fit, @import Google Fonts
+         * All widths are fixed px. No percentage widths on <img>. No flexbox.
+         */
+
         body {
             margin: 0;
             padding: 0;
             background-color: #f1f5f9;
-            -webkit-font-smoothing: antialiased;
-            font-family: 'Inter', -apple-system, sans-serif;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 14px;
+            color: #334155;
         }
 
-        /* 💡 CRITICAL: Prevents your dynamic cards from being cut in half horizontally across PDF pages */
-        .pdf-section { 
-            page-break-inside: avoid; 
-            margin-bottom: 35px;
+        .pdf-section {
+            page-break-inside: avoid;
+            border: 1px solid #e2e8f0;
+            padding: 28px;
+            margin-bottom: 28px;
+            background-color: #ffffff;
+        }
+
+        .section-badge {
+            display: inline-block;
+            background-color: #f0f9ff;
+            color: #021631;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 3px 10px;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 14px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            color: #021631;
+            margin: 0 0 16px 0;
+            line-height: 1.3;
+        }
+
+        .section-text {
+            font-size: 14px;
+            line-height: 1.8;
+            color: #334155;
+        }
+
+        .section-text p    { margin: 0 0 12px 0; }
+        .section-text ul   { margin: 8px 0; padding-left: 20px; }
+        .section-text li   { margin-bottom: 6px; }
+        .section-text code { background-color: #f1f5f9; padding: 1px 4px; font-size: 12px; }
+
+        .image-caption {
+            font-size: 11px;
+            color: #94a3b8;
+            text-align: center;
+            font-style: italic;
+            margin-top: 4px;
+            margin-bottom: 16px;
+        }
+
+        .footer-text {
+            font-size: 12px;
+            color: #94a3b8;
+            text-align: center;
+        }
+
+        .footer-text strong { color: #ffffff; }
+        .footer-copy {
+            font-size: 11px;
+            color: #64748b;
+            text-align: center;
+            margin-top: 8px;
         }
     </style>
 </head>
-<body style="margin: 0; padding: 0; background-color: #f1f5f9; font-family: 'Inter', Arial, sans-serif;">
+<body>
 
-    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="max-width: 900px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.08);">
-        <tr>
-            <td>
-                
-                <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #021631; padding: 40px 48px; color: #ffffff;">
-                    <tr>
-                        <td valign="middle">
-                            <table border="0" cellspacing="0" cellpadding="0">
-                                <tr>
-                                    <td width="72" style="padding-right: 20px;">
-                                        <div style="width: 65px; height: 65px; background-color: #ffffff; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #021631; font-family: 'Plus Jakarta Sans', sans-serif; font-weight: 800; font-size: 14px; text-align: center; line-height: 1.1; box-shadow: 0 4px 10px rgba(0,0,0,0.15);">
-                                            AAA<br>UVCE
-                                        </div>
-                                    </td>
-                                    <td valign="middle">
-                                        <h1 style="margin: 0; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 24px; font-weight: 800; letter-spacing: 0.5px; color: #ffffff; text-transform: uppercase;">AGENTFORCE ACADEMIA ADVOCATES</h1>
-                                        <h2 style="margin: 4px 0 0; font-family: 'Plus Jakarta Sans', sans-serif; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1.5px; color: #cbd5e1;">University Visvesvaraya College of Engineering</h2>
-                                        <p style="margin: 6px 0 0; font-size: 13px; font-weight: 500; color: #38bdf8; font-style: italic;">Empowering Students Through AI + Salesforce</p>
-                                    </td>
-                                </tr>
-                            </table>
-                        </td>
-                        
-                        <td align="right" valign="middle" style="font-size: 13px; font-weight: 600; color: #cbd5e1; text-transform: uppercase; letter-spacing: 1px; font-family: 'Plus Jakarta Sans', sans-serif;">
-                            <div style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); padding: 8px 18px; border-radius: 8px;">
-                                📅 {{ date }}
-                            </div>
-                        </td>
-                    </tr>
-                </table>
+<!-- ═══════════════════════════════════════════════
+     HEADER — table layout only, no flexbox
+     ═══════════════════════════════════════════════ -->
+<table width="760" border="0" cellspacing="0" cellpadding="0"
+       style="background-color:#021631; padding:32px 48px; margin:0 auto;">
+    <tr>
+        <td valign="middle" width="480">
+            <!-- Logo circle rendered as a styled table cell -->
+            <table border="0" cellspacing="0" cellpadding="0">
+                <tr>
+                    <td width="70" valign="middle">
+                        <table width="60" height="60" border="0" cellspacing="0" cellpadding="0"
+                               style="background-color:#ffffff; border-radius:50%;">
+                            <tr>
+                                <td align="center" valign="middle"
+                                    style="font-size:11px; font-weight:800; color:#021631;
+                                           font-family:Arial,sans-serif; line-height:1.2;">
+                                    AAA<br>UVCE
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                    <td valign="middle" style="padding-left:14px;">
+                        <p style="margin:0; font-size:18px; font-weight:800; color:#ffffff;
+                                  text-transform:uppercase; letter-spacing:0.5px;
+                                  font-family:Arial,sans-serif;">
+                            AGENTFORCE ACADEMIA ADVOCATES
+                        </p>
+                        <p style="margin:4px 0 0; font-size:10px; font-weight:600; color:#cbd5e1;
+                                  text-transform:uppercase; letter-spacing:1.5px;
+                                  font-family:Arial,sans-serif;">
+                            University Visvesvaraya College of Engineering
+                        </p>
+                        <p style="margin:5px 0 0; font-size:12px; color:#38bdf8;
+                                  font-style:italic; font-family:Arial,sans-serif;">
+                            Empowering Students Through AI + Salesforce
+                        </p>
+                    </td>
+                </tr>
+            </table>
+        </td>
+        <td align="right" valign="middle">
+            <p style="margin:0; font-size:12px; font-weight:600; color:#cbd5e1;
+                      text-transform:uppercase; letter-spacing:1px;
+                      border:1px solid rgba(255,255,255,0.2);
+                      padding:6px 14px; font-family:Arial,sans-serif;">
+                {{ date }}
+            </p>
+        </td>
+    </tr>
+</table>
 
-                <table width="100%" border="0" cellspacing="0" cellpadding="0" style="padding: 50px 48px; background-color: #ffffff;">
-                    <tr>
-                        <td>
-                            <h2 style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 32px; font-weight: 800; color: #021631; margin-top: 0; margin-bottom: 40px; border-left: 5px solid #38bdf8; padding-left: 15px; line-height: 1.2;">
-                                {{ newsletter_title }}
-                            </h2>
+<!-- ═══════════════════════════════════════════════
+     BODY CONTENT
+     ═══════════════════════════════════════════════ -->
+<table width="760" border="0" cellspacing="0" cellpadding="0"
+       style="background-color:#ffffff; padding:40px 48px; margin:0 auto;">
+    <tr>
+        <td>
 
-                            {% for section in article_sections %}
-                            <div class="pdf-section" style="background-color: #ffffff; border-radius: 12px; padding: 35px; border: 1px solid #e2e8f0; box-shadow: 0 4px 12px rgba(0,0,0,0.02); margin-bottom: 35px;">
-                                
-                                <div style="display: inline-block; background-color: #f0f9ff; color: #021631; font-size: 11px; font-weight: 700; padding: 4px 12px; border-radius: 20px; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 18px; font-family: 'Plus Jakarta Sans', sans-serif;">
-                                    Insight Brief
-                                </div>
+            <!-- Newsletter Title -->
+            <p style="font-size:26px; font-weight:800; color:#021631;
+                      margin:0 0 32px 0; line-height:1.3;
+                      border-left:5px solid #38bdf8; padding-left:14px;
+                      font-family:Arial,sans-serif;">
+                {{ newsletter_title }}
+            </p>
 
-                                <h3 style="font-family: 'Plus Jakarta Sans', sans-serif; font-size: 24px; font-weight: 700; color: #021631; margin-top: 0; margin-bottom: 20px; line-height: 1.3;">
-                                    {{ section.section_title }}
-                                </h3>
+            <!-- ═══════════════════════════════════
+                 SECTIONS LOOP
+                 Use section['key'] — these are plain Python dicts
+                 ═══════════════════════════════════ -->
+            {% for section in article_sections %}
+            <div class="pdf-section">
 
-                                {% if section.image_url %}
-                                <div style="margin-bottom: 25px; text-align: center;">
-                                    <img src="{{ section.image_url }}" 
-                                         alt="{{ section.alt_text | default('Article Image') }}" 
-                                         width="760"
-                                         height="360"
-                                         style="width: 100%; height: 360px; object-fit: cover; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.04); display: block;" />
-                                </div>
-                                {% endif %}
+                <div class="section-badge">Insight Brief</div>
 
-                                <div style="font-size: 15.5px; line-height: 1.8; color: #334155; text-align: left;">
-                                    {{ section.paragraph_text | replace('\n', '<br><br>') }}
-                                </div>
-                            </div>
-                            {% endfor %}
+                <p class="section-title">{{ section['section_title'] }}</p>
 
-                        </td>
-                    </tr>
-                </table>
+                {% if section['image_url'] %}
+                <div style="margin-bottom:16px; text-align:center;">
+                    <!--
+                        ✅ Fixed pixel width/height — NO percentages
+                        ✅ No object-fit (not supported)
+                        ✅ base64 src — no external URL fetching during PDF render
+                    -->
+                    <img
+                        src="{{ section['image_url'] }}"
+                        alt="{{ section['alt_text'] or 'Article image' }}"
+                        width="664"
+                        height="260"
+                        style="display:block; margin:0 auto; border-radius:6px;"
+                    />
+                    {% if section['alt_text'] %}
+                    <p class="image-caption">{{ section['alt_text'] }}</p>
+                    {% endif %}
+                </div>
+                {% endif %}
 
-                <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #021631; color: #94a3b8; padding: 40px 48px; text-align: center; border-top: 1px solid rgba(255, 255, 255, 0.1);">
-                    <tr>
-                        <td style="font-size: 13px;">
-                            <div style="font-size: 15px; margin-bottom: 16px; letter-spacing: 0.5px; color: #94a3b8;">
-                                Powered by <strong style="color: #ffffff; font-weight: 600;">Salesforce</strong> <span style="color: #38bdf8; margin: 0 10px;">•</span> Agentforce <span style="color: #38bdf8; margin: 0 10px;">•</span> Innovation &hearts;
-                            </div>
-                            <div style="color: #64748b;">
-                                &copy; 2026 Agentforce Academia Advocates (AAA) - UVCE. All Rights Reserved.<br>
-                                <span style="font-size: 11px; color: #475569; display: block; margin-top: 5px;">Curated autonomously via Aegis Studio.</span>
-                            </div>
-                        </td>
-                    </tr>
-                </table>
+                <!--
+                    ✅ | safe — paragraph_text is already converted HTML from strip_markdown()
+                    Without | safe, Jinja2 would escape <strong> → &lt;strong&gt;
+                -->
+                <div class="section-text">
+                    {{ section['paragraph_text'] | safe }}
+                </div>
 
-            </td>
-        </tr>
-    </table>
+            </div>
+            {% endfor %}
+
+        </td>
+    </tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════
+     FOOTER
+     ═══════════════════════════════════════════════ -->
+<table width="760" border="0" cellspacing="0" cellpadding="0"
+       style="background-color:#021631; padding:32px 48px;
+              border-top:1px solid rgba(255,255,255,0.1); margin:0 auto;">
+    <tr>
+        <td>
+            <p class="footer-text">
+                Powered by <strong>Salesforce</strong>
+                &nbsp;&bull;&nbsp;
+                <span style="color:#38bdf8;">Agentforce</span>
+                &nbsp;&bull;&nbsp;
+                Innovation
+            </p>
+            <p class="footer-copy">
+                &copy; 2026 Agentforce Academia Advocates (AAA) &mdash; UVCE. All Rights Reserved.<br/>
+                Curated autonomously via Aegis Studio.
+            </p>
+        </td>
+    </tr>
+</table>
 
 </body>
 </html>
