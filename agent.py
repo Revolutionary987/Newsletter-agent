@@ -58,7 +58,7 @@ gpt_mini= ChatOpenAI(
     max_retries=3
 )
 gemini_llm=ChatGoogleGenerativeAI(
-    model="gemini-2.5-flash",
+    model="gemini-2.5-flash-lite",
     api_key=os.getenv("GOOGLE_API_KEY"),
     temperature=0.0,
 )

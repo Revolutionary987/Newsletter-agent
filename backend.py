@@ -108,49 +108,26 @@ async def fetch_image_as_base64(url: str) -> str:
         print(f"Image fetch error for {url}: {e}")
     return ""
 
-
-# ---------------------------------------------------------------------------
-# PDF RENDERER
-# Uses xhtml2pdf (pisa) to convert final HTML → PDF bytes → base64 string.
-# Runs in a thread via asyncio.to_thread so FastAPI event loop isn't blocked.
-# ---------------------------------------------------------------------------
 def create_pdf_base64_sync(html_content: str) -> str:
     try:
-        from xhtml2pdf import pisa
+        from weasyprint import HTML
 
-        pdf_stream  = io.BytesIO()
-        log_stream  = io.StringIO()
-
-        pisa_status = pisa.CreatePDF(
-            html_content,
-            dest=pdf_stream,
-            log=log_stream
-        )
-
-        # Print any CSS warnings xhtml2pdf emits
-        warnings = log_stream.getvalue()
-        if warnings.strip():
-            print(f"xhtml2pdf warnings:\n{warnings}")
-
-        if pisa_status.err:
-            print(f"xhtml2pdf fatal error code: {pisa_status.err}")
-            return ""
-
-        pdf_bytes = pdf_stream.getvalue()
-        pdf_stream.close()
+        # WeasyPrint renders the modern HTML/CSS directly to PDF bytes
+        pdf_bytes = HTML(string=html_content).write_pdf()
 
         if not pdf_bytes:
-            print("xhtml2pdf produced empty output")
+            print("WeasyPrint produced empty output")
             return ""
 
-        return "data:application/pdf;base64," + base64.b64encode(pdf_bytes).decode("utf-8")
+        # Encode bytes to Base64 data URI for the React frontend
+        b64_encoded = base64.b64encode(pdf_bytes).decode("utf-8")
+        return f"data:application/pdf;base64,{b64_encoded}"
 
     except Exception as e:
         print(f"PDF generation exception: {e}")
         traceback.print_exc()
         return ""
-
-
+    
 async def generate_pdf(topic: str, article_sections: list) -> str:
     # 1. Download all images and convert to base64 in parallel
     image_tasks   = [fetch_image_as_base64(s.get("image_url", "")) for s in article_sections]
@@ -161,8 +138,6 @@ async def generate_pdf(topic: str, article_sections: list) -> str:
     clean_sections = []
     for i, section in enumerate(article_sections):
         raw_markdown = section.get("paragraph_text", "")
-        
-        # 💡 THE FIX: Convert Markdown to HTML, enabling tables and lists
         html_text = markdown.markdown(raw_markdown, extensions=['tables', 'fenced_code'])
 
         clean_sections.append({
@@ -212,11 +187,7 @@ async def agent_call(request: initial):
                     # Always track the latest article_sections from any node
                     if "article_sections" in node_output and node_output["article_sections"]:
                         final_sections = node_output["article_sections"]
-
-                    # Keep frontend progress bar alive
                     yield f"data: {json.dumps({'status': 'running', 'node': node_name})}\n\n"
-
-            # Graph finished — now render PDF
             if final_sections:
                 yield f"data: {json.dumps({'status': 'running', 'node': 'Rendering PDF'})}\n\n"
 
@@ -226,8 +197,6 @@ async def agent_call(request: initial):
                     print("PDF generated successfully")
                 else:
                     print("PDF generation failed — sending sections without PDF")
-
-                # ✅ Always send 'complete' so frontend never hangs
                 yield f"data: {json.dumps({'status': 'complete', 'sections': final_sections, 'pdf_url': pdf_url or ''})}\n\n"
 
             else:
